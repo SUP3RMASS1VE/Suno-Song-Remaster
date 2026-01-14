@@ -42,6 +42,9 @@
       "image.png",
       "node_modules/**/*"
     ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**/*"
+    ],
     "win": {
       "target": "nsis",
       "icon": "image.png"

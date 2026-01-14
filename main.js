@@ -1,11 +1,21 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
-const ffmpegPath = require('ffmpeg-static');
 const fs = require('fs');
 const os = require('os');
 
-ffmpeg.setFfmpegPath(ffmpegPath);
+// Get ffmpeg path - handle both dev and packaged app
+function getFfmpegPath() {
+  const ffmpegStatic = require('ffmpeg-static');
+  
+  // In packaged app, ffmpeg-static is unpacked from asar
+  if (app.isPackaged) {
+    return ffmpegStatic.replace('app.asar', 'app.asar.unpacked');
+  }
+  return ffmpegStatic;
+}
+
+ffmpeg.setFfmpegPath(getFfmpegPath());
 
 let mainWindow;
 const previewDir = path.join(os.tmpdir(), 'spotify-worthy-preview');
@@ -106,6 +116,14 @@ async function analyzeLoudness(inputPath) {
 
 // Process audio file
 ipcMain.handle('process-audio', async (event, { inputPath, outputPath, settings }) => {
+  // Validate inputs
+  if (!inputPath || !fs.existsSync(inputPath)) {
+    throw new Error('Input file not found: ' + inputPath);
+  }
+  if (!outputPath) {
+    throw new Error('No output path specified');
+  }
+  
   const ceiling = settings.truePeakCeiling || -1.0;
   
   let loudnessStats = null;
@@ -206,7 +224,7 @@ ipcMain.handle('process-audio', async (event, { inputPath, outputPath, settings 
         mainWindow.webContents.send('processing-progress', actualProgress || 0);
       })
       .on('end', () => resolve({ success: true }))
-      .on('error', (err) => reject({ success: false, error: err.message }))
+      .on('error', (err) => reject(new Error(err.message)))
       .save(outputPath);
   });
 });
