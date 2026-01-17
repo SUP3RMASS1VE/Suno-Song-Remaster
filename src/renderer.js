@@ -179,7 +179,8 @@ function buildFilterChain(settings) {
 
   // 8. Loudness normalization
   if (settings.normalizeLoudness) {
-    filters.push('loudnorm=I=-14:TP=-2:LRA=11:linear=false');
+    // linear=true preserves tonal character better (no dynamic processing)
+    filters.push('loudnorm=I=-14:TP=-1:LRA=11:linear=true');
   }
 
   // 9. Final limiter
