@@ -666,6 +666,23 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.btn-cancel {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-cancel:hover {
+  background: rgba(255, 100, 100, 0.1);
+  border-color: rgba(255, 100, 100, 0.5);
+  color: #ff6b6b;
+}
+
 .btn-process {
   background: var(--bg-card);
   color: var(--text-primary);
@@ -838,6 +855,37 @@ body {
 }
 
 .preset-btn.active {
+  background: var(--theme-accent);
+  color: var(--theme-background);
+  border-color: var(--theme-accent);
+}
+
+/* Output Presets */
+.output-presets {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.output-preset-btn {
+  flex: 1;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.output-preset-btn:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  border-color: var(--theme-accent);
+}
+
+.output-preset-btn.active {
   background: var(--theme-accent);
   color: var(--theme-background);
   border-color: var(--theme-accent);

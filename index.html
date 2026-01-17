@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' file:">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://unpkg.com; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; media-src 'self' file:; connect-src 'self' blob: file: ws: https://unpkg.com">
   <title>Suno Song Remaster</title>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -117,8 +117,8 @@
             <input type="checkbox" id="cleanLowEnd" checked>
             <span class="toggle"></span>
           </label>
-          <label class="toggle-row" data-tip="Makes bass frequencies mono for better club/speaker compatibility. Export only.">
-            <span>Center Bass</span>
+          <label class="toggle-row" data-tip="Makes bass frequencies mono for better club/speaker compatibility. Export only - no preview available.">
+            <span>Center Bass <span class="export-badge">Export Only</span></span>
             <input type="checkbox" id="centerBass">
             <span class="toggle"></span>
           </label>
@@ -145,6 +145,10 @@
 
         <div class="settings-card">
           <h3>💾 Output</h3>
+          <div class="output-presets">
+            <button class="output-preset-btn active" data-preset="streaming" data-tip="44.1kHz/16-bit - Spotify, Apple Music, CD quality">Streaming</button>
+            <button class="output-preset-btn" data-preset="studio" data-tip="48kHz/24-bit - Studio quality, video production">Studio</button>
+          </div>
           <div class="select-row" data-tip="44.1kHz is CD quality and Spotify standard. 48kHz for video.">
             <span>Sample Rate</span>
             <select id="sampleRate">
@@ -213,6 +217,7 @@
             <div class="progress-fill" id="progressFill"></div>
           </div>
           <span id="progressText">0%</span>
+          <button id="cancelBtn" class="btn-cancel">Cancel</button>
         </div>
         <button id="processBtn" class="btn-process" disabled>
           <span>🚀</span> Export Mastered WAV
@@ -225,6 +230,6 @@
   <!-- Tooltip element -->
   <div id="tooltip" class="tooltip"></div>
 
-  <script src="renderer.js"></script>
+  <script type="module" src="/src/renderer.js"></script>
 </body>
 </html>
