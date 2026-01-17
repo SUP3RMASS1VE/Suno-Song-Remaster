@@ -73,8 +73,8 @@ npm run build:linux  # Linux
 
 - Electron 39
 - Vite 7 (build system)
-- FFmpeg.wasm (browser-based audio processing)
-- Web Audio API (real-time preview)
+- Web Audio API (preview and export processing)
+- Pure JavaScript LUFS measurement (ITU-R BS.1770-4)
 
 ## License
 
@@ -83,6 +83,30 @@ ISC
 ---
 
 ## Changelog
+
+### v1.3.0 (2026-01-17)
+
+**Removed FFmpeg Dependency**
+- Completely removed FFmpeg.wasm - app now uses pure JavaScript for all audio processing
+- Faster file loading (no WASM initialization delay)
+- Smaller app bundle size
+- No more cross-origin isolation requirements
+
+**Pure JavaScript LUFS Measurement**
+- Implemented ITU-R BS.1770-4 compliant loudness measurement
+- K-weighting filters (high shelf + high pass) for perceptual loudness
+- 400ms blocks with 75% overlap for accurate integrated loudness
+- Absolute threshold (-70 LUFS) and relative threshold (-10 LU) gating
+
+**Web Audio Offline Render**
+- Export now uses OfflineAudioContext for guaranteed identical output to preview
+- Same processing chain for preview and export (no more "thin and loud" exports)
+- Pure JavaScript WAV encoder supporting 16-bit and 24-bit
+- Sample rate conversion handled by Web Audio API
+
+**Fixes**
+- Fixed export sounding different from preview (was using FFmpeg on original file)
+- Export now applies all effects identically to what you hear in preview
 
 ### v1.2.0 (2026-01-16)
 

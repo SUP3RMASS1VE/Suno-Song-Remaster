@@ -1,266 +1,147 @@
 // ============================================================================
-// FFmpeg.wasm Processor (runs in renderer)
+// LUFS Loudness Measurement & Normalization (Pure JavaScript - No FFmpeg)
 // ============================================================================
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { toBlobURL } from '@ffmpeg/util';
 
-let ffmpeg = null;
-let ffmpegLoaded = false;
-let ffmpegLoading = false;
-let currentProgressCallback = null; // Global callback for FFmpeg progress
+/**
+ * Apply biquad filter to audio samples
+ */
+function applyBiquadFilter(samples, coeffs) {
+  const output = new Float32Array(samples.length);
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  const { b0, b1, b2, a1, a2 } = coeffs;
 
-async function initFFmpeg(onProgress) {
-  if (ffmpegLoaded) return;
-  if (ffmpegLoading) {
-    // Wait for loading to complete
-    while (ffmpegLoading) {
-      await new Promise(r => setTimeout(r, 100));
-    }
-    return;
+  for (let i = 0; i < samples.length; i++) {
+    const x0 = samples[i];
+    const y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+    output[i] = y0;
+    x2 = x1; x1 = x0;
+    y2 = y1; y1 = y0;
   }
-
-  ffmpegLoading = true;
-
-  try {
-    console.log('[FFmpeg] Starting initialization...');
-    console.log('[FFmpeg] SharedArrayBuffer available:', typeof SharedArrayBuffer !== 'undefined');
-
-    ffmpeg = new FFmpeg();
-
-    // Progress callback - updates export progress and/or loading modal
-    ffmpeg.on('progress', ({ progress }) => {
-      // Update export progress using global callback
-      if (currentProgressCallback) {
-        // Scale to 10-90% range (10% for setup, 90% for writing file)
-        currentProgressCallback(10 + Math.round(progress * 80));
-      }
-      // Update loading modal if visible (during file load normalization)
-      const modal = document.getElementById('loadingModal');
-      if (modal && !modal.classList.contains('hidden')) {
-        const percent = 30 + Math.round(progress * 50); // 30-80% range for normalization
-        const bar = document.getElementById('loadingProgressBar');
-        const text = document.getElementById('loadingPercent');
-        if (bar) bar.style.width = `${percent}%`;
-        if (text) text.textContent = `${percent}%`;
-      }
-    });
-
-    // Log FFmpeg events for debugging
-    ffmpeg.on('log', ({ message }) => {
-      console.log('[FFmpeg Log]', message);
-    });
-
-    // Use toBlobURL to convert URLs to blob URLs (required for proper module loading)
-    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
-    const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript');
-    const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm');
-
-    console.log('[FFmpeg] Loading FFmpeg core...');
-
-    // Load FFmpeg core with timeout
-    const loadPromise = ffmpeg.load({
-      coreURL,
-      wasmURL,
-    });
-
-    // Add 60 second timeout for loading
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('FFmpeg loading timed out after 60 seconds')), 60000);
-    });
-
-    await Promise.race([loadPromise, timeoutPromise]);
-
-    console.log('[FFmpeg] Core loaded successfully!');
-    ffmpegLoaded = true;
-
-    // Check available filters
-    await checkAvailableFilters();
-  } catch (error) {
-    console.error('[FFmpeg] Initialization failed:', error);
-    throw error;
-  } finally {
-    ffmpegLoading = false;
-  }
+  return output;
 }
 
-async function checkAvailableFilters() {
-  if (!ffmpeg) return;
+/**
+ * Calculate biquad coefficients for high shelf filter (K-weighting)
+ */
+function calcHighShelfCoeffs(sampleRate, frequency, gainDB, Q) {
+  const A = Math.pow(10, gainDB / 40);
+  const w0 = 2 * Math.PI * frequency / sampleRate;
+  const cosW0 = Math.cos(w0);
+  const sinW0 = Math.sin(w0);
+  const alpha = sinW0 / (2 * Q);
 
-  console.log('[FFmpeg] Checking available filters...');
+  const b0 = A * ((A + 1) + (A - 1) * cosW0 + 2 * Math.sqrt(A) * alpha);
+  const b1 = -2 * A * ((A - 1) + (A + 1) * cosW0);
+  const b2 = A * ((A + 1) + (A - 1) * cosW0 - 2 * Math.sqrt(A) * alpha);
+  const a0 = (A + 1) - (A - 1) * cosW0 + 2 * Math.sqrt(A) * alpha;
+  const a1 = 2 * ((A - 1) - (A + 1) * cosW0);
+  const a2 = (A + 1) - (A - 1) * cosW0 - 2 * Math.sqrt(A) * alpha;
 
-  // Check for specific filters we care about
-  const filtersToCheck = ['crossfeed', 'adeclip', 'loudnorm', 'acompressor', 'alimiter', 'equalizer', 'highpass', 'pan'];
-
-  try {
-    // Run ffmpeg -filters to get list
-    await ffmpeg.exec(['-filters']);
-
-    // The output goes to the log handler, so we'll also test each filter directly
-    for (const filter of filtersToCheck) {
-      try {
-        // Try to parse the filter - if it fails, filter doesn't exist
-        await ffmpeg.exec(['-f', 'lavfi', '-i', `anullsrc=r=44100:cl=stereo,${filter}=`, '-t', '0.001', '-f', 'null', '-']);
-        console.log(`[FFmpeg] Filter '${filter}' - AVAILABLE`);
-      } catch (e) {
-        // Check if error is about unknown filter vs other errors
-        if (e.message && e.message.includes('No such filter')) {
-          console.log(`[FFmpeg] Filter '${filter}' - NOT AVAILABLE`);
-        } else {
-          // Filter exists but our test args might be wrong
-          console.log(`[FFmpeg] Filter '${filter}' - LIKELY AVAILABLE (test inconclusive)`);
-        }
-      }
-    }
-  } catch (e) {
-    console.warn('[FFmpeg] Could not check filters:', e.message);
-  }
+  return { b0: b0/a0, b1: b1/a0, b2: b2/a0, a1: a1/a0, a2: a2/a0 };
 }
 
-function buildFilterChain(settings) {
-  const filters = [];
-  let complexGraph = null;
+/**
+ * Calculate biquad coefficients for high pass filter (K-weighting)
+ */
+function calcHighPassCoeffs(sampleRate, frequency, Q) {
+  const w0 = 2 * Math.PI * frequency / sampleRate;
+  const cosW0 = Math.cos(w0);
+  const sinW0 = Math.sin(w0);
+  const alpha = sinW0 / (2 * Q);
 
-  // 1. High-pass filter (clean low end)
-  if (settings.cleanLowEnd) {
-    filters.push('highpass=f=30');
+  const b0 = (1 + cosW0) / 2;
+  const b1 = -(1 + cosW0);
+  const b2 = (1 + cosW0) / 2;
+  const a0 = 1 + alpha;
+  const a1 = -2 * cosW0;
+  const a2 = 1 - alpha;
+
+  return { b0: b0/a0, b1: b1/a0, b2: b2/a0, a1: a1/a0, a2: a2/a0 };
+}
+
+/**
+ * Measure integrated loudness (LUFS) of an AudioBuffer
+ * Based on ITU-R BS.1770-4
+ */
+function measureLUFS(audioBuffer) {
+  const sampleRate = audioBuffer.sampleRate;
+  const numChannels = audioBuffer.numberOfChannels;
+  const length = audioBuffer.length;
+
+  const channels = [];
+  for (let ch = 0; ch < numChannels; ch++) {
+    channels.push(audioBuffer.getChannelData(ch));
   }
 
-  // 2. Stereo width processing (M/S technique)
-  // Check if we need stereo processing (width != 100% or monoBass enabled)
-  const stereoWidth = settings.stereoWidth !== undefined ? settings.stereoWidth / 100 : 1.0; // Convert % to 0-2 range
-  const needsStereoProcessing = stereoWidth !== 1.0 || settings.centerBass;
+  // Apply K-weighting filters
+  const highShelfCoeffs = calcHighShelfCoeffs(sampleRate, 1681.97, 4.0, 0.71);
+  const highPassCoeffs = calcHighPassCoeffs(sampleRate, 38.14, 0.5);
 
-  if (needsStereoProcessing) {
-    // Build frequency-dependent M/S stereo width filter using filter_complex
-    // This splits bass from highs, applies different width to each, and recombines
-    const bassWidth = settings.centerBass ? 0.3 : stereoWidth; // 30% width for mono bass, or global width
-    const highsWidth = stereoWidth;
+  const filteredChannels = channels.map(ch => {
+    let filtered = applyBiquadFilter(ch, highShelfCoeffs);
+    filtered = applyBiquadFilter(filtered, highPassCoeffs);
+    return filtered;
+  });
 
-    // stereotools slev controls side level (0 = mono, 1 = original, 2 = extra wide)
-    // We use asplit to duplicate, process bass and highs separately, then amix to combine
-    if (settings.centerBass) {
-      // Frequency-dependent: narrow bass, user-controlled highs
-      complexGraph = `asplit=2[lo][hi];` +
-        `[lo]lowpass=f=80,stereotools=slev=${bassWidth.toFixed(2)}[lo_out];` +
-        `[hi]highpass=f=80,stereotools=slev=${highsWidth.toFixed(2)}[hi_out];` +
-        `[lo_out][hi_out]amix=inputs=2:weights=1 1`;
-    } else {
-      // Just overall stereo width adjustment
-      filters.push(`stereotools=slev=${stereoWidth.toFixed(2)}`);
+  // Calculate mean square per 400ms block with 75% overlap
+  const blockSize = Math.floor(sampleRate * 0.4);
+  const hopSize = Math.floor(sampleRate * 0.1);
+  const blocks = [];
+
+  for (let start = 0; start + blockSize <= length; start += hopSize) {
+    let sumSquares = 0;
+    for (let ch = 0; ch < numChannels; ch++) {
+      const channelData = filteredChannels[ch];
+      for (let i = start; i < start + blockSize; i++) {
+        sumSquares += channelData[i] * channelData[i];
+      }
+    }
+    blocks.push(sumSquares / (blockSize * numChannels));
+  }
+
+  if (blocks.length === 0) return -Infinity;
+
+  // Absolute threshold gating (-70 LUFS)
+  let gatedBlocks = blocks.filter(ms => ms > Math.pow(10, -7));
+  if (gatedBlocks.length === 0) return -Infinity;
+
+  // Relative threshold gating (-10 dB below ungated mean)
+  const ungatedMean = gatedBlocks.reduce((a, b) => a + b, 0) / gatedBlocks.length;
+  gatedBlocks = gatedBlocks.filter(ms => ms > ungatedMean * 0.1);
+  if (gatedBlocks.length === 0) return -Infinity;
+
+  const gatedMean = gatedBlocks.reduce((a, b) => a + b, 0) / gatedBlocks.length;
+  return -0.691 + 10 * Math.log10(gatedMean);
+}
+
+/**
+ * Normalize an AudioBuffer to target LUFS by applying gain
+ */
+function normalizeToLUFS(audioBuffer, targetLUFS = -14) {
+  const currentLUFS = measureLUFS(audioBuffer);
+  console.log('[LUFS] Current:', currentLUFS.toFixed(2), 'LUFS, Target:', targetLUFS, 'LUFS');
+
+  if (!isFinite(currentLUFS)) {
+    console.warn('[LUFS] Could not measure loudness, skipping normalization');
+    return audioBuffer;
+  }
+
+  const gainDB = targetLUFS - currentLUFS;
+  const gainLinear = Math.pow(10, gainDB / 20);
+  console.log('[LUFS] Applying gain:', gainDB.toFixed(2), 'dB');
+
+  const ctx = new OfflineAudioContext(audioBuffer.numberOfChannels, audioBuffer.length, audioBuffer.sampleRate);
+  const normalizedBuffer = ctx.createBuffer(audioBuffer.numberOfChannels, audioBuffer.length, audioBuffer.sampleRate);
+
+  for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+    const input = audioBuffer.getChannelData(ch);
+    const output = normalizedBuffer.getChannelData(ch);
+    for (let i = 0; i < input.length; i++) {
+      output[i] = input[i] * gainLinear;
     }
   }
 
-  // 3. 5-band EQ
-  if (settings.eqLow && settings.eqLow !== 0) {
-    filters.push(`equalizer=f=80:t=h:w=100:g=${settings.eqLow}`);
-  }
-  if (settings.eqLowMid && settings.eqLowMid !== 0) {
-    filters.push(`equalizer=f=250:t=q:w=1:g=${settings.eqLowMid}`);
-  }
-  if (settings.eqMid && settings.eqMid !== 0) {
-    filters.push(`equalizer=f=1000:t=q:w=1:g=${settings.eqMid}`);
-  }
-  if (settings.eqHighMid && settings.eqHighMid !== 0) {
-    filters.push(`equalizer=f=4000:t=q:w=1:g=${settings.eqHighMid}`);
-  }
-  if (settings.eqHigh && settings.eqHigh !== 0) {
-    filters.push(`equalizer=f=12000:t=h:w=2000:g=${settings.eqHigh}`);
-  }
-
-  // 4. Cut mud (250Hz)
-  if (settings.cutMud) {
-    filters.push('equalizer=f=250:t=q:w=1.5:g=-3');
-  }
-
-  // 5. Tame harshness (4-6kHz)
-  if (settings.tameHarsh) {
-    filters.push('equalizer=f=4000:t=q:w=2:g=-2');
-    filters.push('equalizer=f=6000:t=q:w=1.5:g=-1.5');
-  }
-
-  // 6. Add air (12kHz)
-  if (settings.addAir) {
-    filters.push('treble=g=2.5:f=12000:t=s');
-  }
-
-  // 7. Glue compression
-  if (settings.glueCompression) {
-    filters.push('acompressor=threshold=0.125:ratio=3:attack=20:release=250:makeup=1');
-  }
-
-  // 8. Loudness normalization - SKIP if already normalized on load
-  // The file is pre-normalized during load, so we don't need to do it again on export
-  // This prevents double-normalization which degrades audio quality
-
-  // 9. Final limiter
-  if (settings.truePeakLimit) {
-    const ceiling = settings.truePeakCeiling || -1;
-    const limitLinear = Math.pow(10, ceiling / 20);
-    filters.push(`alimiter=limit=${limitLinear}:attack=0.1:release=50`);
-  }
-
-  return { filters, complexGraph };
-}
-
-async function processAudioWithFFmpeg(inputData, inputName, outputName, settings, onProgress) {
-  // Set global progress callback for FFmpeg events
-  currentProgressCallback = onProgress;
-
-  if (!ffmpegLoaded) {
-    if (onProgress) onProgress(5);
-    await initFFmpeg(onProgress);
-  }
-
-  // Write input file to FFmpeg's virtual filesystem
-  await ffmpeg.writeFile(inputName, inputData);
-
-  if (onProgress) onProgress(10);
-
-  // Build filter chain
-  const { filters, complexGraph } = buildFilterChain(settings);
-
-  // Build FFmpeg command
-  const args = ['-i', inputName];
-
-  // Use filter_complex for frequency-dependent stereo processing, otherwise use simple -af
-  if (complexGraph) {
-    // Complex filter graph for M/S stereo width with frequency splitting
-    // Append remaining filters after the amix output
-    const remainingFilters = filters.join(',');
-    const fullGraph = remainingFilters
-      ? `${complexGraph},${remainingFilters}`
-      : complexGraph;
-    args.push('-filter_complex', fullGraph);
-  } else if (filters.length > 0) {
-    // Simple linear filter chain
-    args.push('-af', filters.join(','));
-  }
-
-  // Output format
-  const sampleRate = settings.sampleRate || 44100;
-  const bitDepth = settings.bitDepth || 16;
-
-  args.push(
-    '-ar', String(sampleRate),
-    '-ac', '2',
-    '-c:a', `pcm_s${bitDepth}le`,
-    outputName
-  );
-
-  // Run FFmpeg
-  await ffmpeg.exec(args);
-
-  // Read output
-  const outputData = await ffmpeg.readFile(outputName);
-
-  // Cleanup
-  await ffmpeg.deleteFile(inputName);
-  await ffmpeg.deleteFile(outputName);
-
-  // Clear progress callback
-  currentProgressCallback = null;
-
-  return outputData;
+  return normalizedBuffer;
 }
 
 // ============================================================================
@@ -663,6 +544,225 @@ function updateEQ() {
 }
 
 // ============================================================================
+// Offline Render (Bounce) - Uses same Web Audio processing as preview
+// ============================================================================
+
+/**
+ * Encode an AudioBuffer to WAV format (supports 16-bit and 24-bit)
+ */
+function encodeWAV(audioBuffer, targetSampleRate, bitDepth) {
+  const numChannels = audioBuffer.numberOfChannels;
+  const sampleRate = targetSampleRate || audioBuffer.sampleRate;
+  const bytesPerSample = bitDepth / 8;
+
+  const channelData = [];
+  for (let ch = 0; ch < numChannels; ch++) {
+    channelData.push(audioBuffer.getChannelData(ch));
+  }
+
+  const numSamples = channelData[0].length;
+  const dataSize = numSamples * numChannels * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  const writeString = (offset, str) => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  };
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numChannels * bytesPerSample, true);
+  view.setUint16(32, numChannels * bytesPerSample, true);
+  view.setUint16(34, bitDepth, true);
+  writeString(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  const maxVal = bitDepth === 16 ? 32767 : 8388607;
+
+  for (let i = 0; i < numSamples; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      const sample = Math.max(-1, Math.min(1, channelData[ch][i]));
+      const intSample = Math.round(sample * maxVal);
+
+      if (bitDepth === 16) {
+        view.setInt16(offset, intSample, true);
+        offset += 2;
+      } else if (bitDepth === 24) {
+        view.setUint8(offset, intSample & 0xFF);
+        view.setUint8(offset + 1, (intSample >> 8) & 0xFF);
+        view.setUint8(offset + 2, (intSample >> 16) & 0xFF);
+        offset += 3;
+      }
+    }
+  }
+
+  return new Uint8Array(buffer);
+}
+
+/**
+ * Create audio processing nodes for offline context (same as preview chain)
+ */
+function createOfflineNodes(offlineCtx, settings) {
+  const nodes = {};
+
+  nodes.highpass = offlineCtx.createBiquadFilter();
+  nodes.lowshelf = offlineCtx.createBiquadFilter();
+  nodes.highshelf = offlineCtx.createBiquadFilter();
+  nodes.midPeak = offlineCtx.createBiquadFilter();
+  nodes.compressor = offlineCtx.createDynamicsCompressor();
+  nodes.limiter = offlineCtx.createDynamicsCompressor();
+
+  nodes.eqLow = offlineCtx.createBiquadFilter();
+  nodes.eqLowMid = offlineCtx.createBiquadFilter();
+  nodes.eqMid = offlineCtx.createBiquadFilter();
+  nodes.eqHighMid = offlineCtx.createBiquadFilter();
+  nodes.eqHigh = offlineCtx.createBiquadFilter();
+
+  nodes.stereoSplitter = offlineCtx.createChannelSplitter(2);
+  nodes.stereoMerger = offlineCtx.createChannelMerger(2);
+  nodes.lToMid = offlineCtx.createGain();
+  nodes.rToMid = offlineCtx.createGain();
+  nodes.lToSide = offlineCtx.createGain();
+  nodes.rToSide = offlineCtx.createGain();
+
+  // Configure EQ bands
+  nodes.eqLow.type = 'lowshelf';
+  nodes.eqLow.frequency.value = 80;
+  nodes.eqLow.gain.value = settings.eqLow || 0;
+
+  nodes.eqLowMid.type = 'peaking';
+  nodes.eqLowMid.frequency.value = 250;
+  nodes.eqLowMid.Q.value = 1;
+  nodes.eqLowMid.gain.value = settings.eqLowMid || 0;
+
+  nodes.eqMid.type = 'peaking';
+  nodes.eqMid.frequency.value = 1000;
+  nodes.eqMid.Q.value = 1;
+  nodes.eqMid.gain.value = settings.eqMid || 0;
+
+  nodes.eqHighMid.type = 'peaking';
+  nodes.eqHighMid.frequency.value = 4000;
+  nodes.eqHighMid.Q.value = 1;
+  nodes.eqHighMid.gain.value = settings.eqHighMid || 0;
+
+  nodes.eqHigh.type = 'highshelf';
+  nodes.eqHigh.frequency.value = 12000;
+  nodes.eqHigh.gain.value = settings.eqHigh || 0;
+
+  nodes.highpass.type = 'highpass';
+  nodes.highpass.frequency.value = settings.cleanLowEnd ? 30 : 1;
+  nodes.highpass.Q.value = 0.7;
+
+  nodes.lowshelf.type = 'peaking';
+  nodes.lowshelf.frequency.value = 250;
+  nodes.lowshelf.Q.value = 1.5;
+  nodes.lowshelf.gain.value = settings.cutMud ? -3 : 0;
+
+  nodes.highshelf.type = 'highshelf';
+  nodes.highshelf.frequency.value = 12000;
+  nodes.highshelf.gain.value = settings.addAir ? 2.5 : 0;
+
+  nodes.midPeak.type = 'peaking';
+  nodes.midPeak.frequency.value = 5000;
+  nodes.midPeak.Q.value = 2;
+  nodes.midPeak.gain.value = settings.tameHarsh ? -2 : 0;
+
+  if (settings.glueCompression) {
+    nodes.compressor.threshold.value = -18;
+    nodes.compressor.knee.value = 10;
+    nodes.compressor.ratio.value = 3;
+    nodes.compressor.attack.value = 0.02;
+    nodes.compressor.release.value = 0.25;
+  } else {
+    nodes.compressor.threshold.value = 0;
+    nodes.compressor.ratio.value = 1;
+  }
+
+  if (settings.truePeakLimit) {
+    nodes.limiter.threshold.value = settings.truePeakCeiling || -1;
+    nodes.limiter.knee.value = 0;
+    nodes.limiter.ratio.value = 20;
+    nodes.limiter.attack.value = 0.001;
+    nodes.limiter.release.value = 0.05;
+  } else {
+    nodes.limiter.threshold.value = 0;
+    nodes.limiter.ratio.value = 1;
+  }
+
+  const width = settings.stereoWidth !== undefined ? settings.stereoWidth / 100 : 1.0;
+  const midCoef = 0.5;
+  const sideCoef = 0.5 * width;
+  nodes.lToMid.gain.value = midCoef + sideCoef;
+  nodes.rToMid.gain.value = midCoef - sideCoef;
+  nodes.lToSide.gain.value = midCoef - sideCoef;
+  nodes.rToSide.gain.value = midCoef + sideCoef;
+
+  return nodes;
+}
+
+/**
+ * Render audio buffer through effects chain using OfflineAudioContext
+ */
+async function renderOffline(sourceBuffer, settings, onProgress) {
+  const targetSampleRate = settings.sampleRate || 44100;
+  const duration = sourceBuffer.duration;
+  const numSamples = Math.ceil(duration * targetSampleRate);
+
+  console.log('[Offline Render] Starting...', { duration, targetSampleRate, numSamples });
+
+  const offlineCtx = new OfflineAudioContext(2, numSamples, targetSampleRate);
+  const source = offlineCtx.createBufferSource();
+  source.buffer = sourceBuffer;
+
+  const nodes = createOfflineNodes(offlineCtx, settings);
+
+  source.connect(nodes.highpass)
+    .connect(nodes.eqLow)
+    .connect(nodes.eqLowMid)
+    .connect(nodes.eqMid)
+    .connect(nodes.eqHighMid)
+    .connect(nodes.eqHigh)
+    .connect(nodes.lowshelf)
+    .connect(nodes.midPeak)
+    .connect(nodes.highshelf)
+    .connect(nodes.compressor)
+    .connect(nodes.stereoSplitter);
+
+  nodes.stereoSplitter.connect(nodes.lToMid, 0);
+  nodes.stereoSplitter.connect(nodes.lToSide, 0);
+  nodes.stereoSplitter.connect(nodes.rToMid, 1);
+  nodes.stereoSplitter.connect(nodes.rToSide, 1);
+
+  nodes.lToMid.connect(nodes.stereoMerger, 0, 0);
+  nodes.rToMid.connect(nodes.stereoMerger, 0, 0);
+  nodes.lToSide.connect(nodes.stereoMerger, 0, 1);
+  nodes.rToSide.connect(nodes.stereoMerger, 0, 1);
+
+  nodes.stereoMerger.connect(nodes.limiter).connect(offlineCtx.destination);
+
+  source.start(0);
+  if (onProgress) onProgress(10);
+
+  const renderedBuffer = await offlineCtx.startRendering();
+  if (onProgress) onProgress(70);
+
+  const wavData = encodeWAV(renderedBuffer, targetSampleRate, settings.bitDepth || 16);
+  if (onProgress) onProgress(90);
+
+  console.log('[Offline Render] Complete!', { outputSize: wavData.byteLength });
+  return wavData;
+}
+
+// ============================================================================
 // Level Meter
 // ============================================================================
 
@@ -878,71 +978,33 @@ async function loadAudioFile(filePath) {
   try {
     // Read file data
     const fileData = await window.electronAPI.readFileData(filePath);
-    const inputData = new Uint8Array(fileData instanceof Uint8Array ? fileData : Object.values(fileData));
+    let arrayBuffer;
 
-    showLoadingModal('Initializing FFmpeg...', 10);
-
-    // Initialize FFmpeg if needed
-    if (!ffmpegLoaded) {
-      await initFFmpeg();
-    }
-
-    showLoadingModal('Normalizing loudness...', 20);
-
-    // Get input filename
-    const inputName = filePath.split(/[\\/]/).pop();
-    const outputName = 'normalized.wav';
-
-    // Write input file
-    await ffmpeg.writeFile(inputName, inputData);
-
-    showLoadingModal('Normalizing loudness...', 30);
-
-    // Run loudnorm
-    const args = [
-      '-i', inputName,
-      '-af', 'loudnorm=I=-14:TP=-1:LRA=11:linear=true',
-      '-ar', '44100',
-      '-ac', '2',
-      '-c:a', 'pcm_s16le',
-      outputName
-    ];
-
-    await ffmpeg.exec(args);
-
-    showLoadingModal('Decoding audio...', 80);
-
-    // Read output
-    const outputData = await ffmpeg.readFile(outputName);
-
-    // Cleanup FFmpeg files
-    await ffmpeg.deleteFile(inputName);
-    await ffmpeg.deleteFile(outputName);
-
-    // Decode normalized audio to AudioBuffer
-    const arrayBuffer = outputData.buffer.slice(
-      outputData.byteOffset,
-      outputData.byteOffset + outputData.byteLength
-    );
-
-    // Store as the main buffer (already normalized)
-    audioNodes.buffer = await ctx.decodeAudioData(arrayBuffer);
-    fileState.normalizedBuffer = audioNodes.buffer;
-
-    showLoadingModal('Preparing original...', 90);
-
-    // Also decode original for toggle (read file again)
-    const origData = await window.electronAPI.readFileData(filePath);
-    let origArrayBuffer;
-    if (origData instanceof Uint8Array) {
-      origArrayBuffer = origData.buffer.slice(origData.byteOffset, origData.byteOffset + origData.byteLength);
-    } else if (origData.buffer) {
-      origArrayBuffer = origData.buffer.slice(origData.byteOffset || 0, (origData.byteOffset || 0) + origData.byteLength);
+    if (fileData instanceof Uint8Array) {
+      arrayBuffer = fileData.buffer.slice(fileData.byteOffset, fileData.byteOffset + fileData.byteLength);
+    } else if (fileData.buffer) {
+      arrayBuffer = fileData.buffer.slice(fileData.byteOffset || 0, (fileData.byteOffset || 0) + fileData.byteLength);
     } else {
-      const uint8 = new Uint8Array(Object.values(origData));
-      origArrayBuffer = uint8.buffer;
+      const uint8 = new Uint8Array(Object.values(fileData));
+      arrayBuffer = uint8.buffer;
     }
-    fileState.originalBuffer = await ctx.decodeAudioData(origArrayBuffer);
+
+    showLoadingModal('Decoding audio...', 20);
+
+    // Decode audio using browser's native decoder (supports MP3, WAV, FLAC, AAC, M4A)
+    const decodedBuffer = await ctx.decodeAudioData(arrayBuffer);
+    fileState.originalBuffer = decodedBuffer;
+
+    showLoadingModal('Measuring loudness...', 40);
+
+    // Normalize to -14 LUFS using pure JavaScript
+    const normalizedBuffer = normalizeToLUFS(decodedBuffer, -14);
+
+    showLoadingModal('Preparing audio...', 80);
+
+    // Store as the main buffer (normalized)
+    audioNodes.buffer = normalizedBuffer;
+    fileState.normalizedBuffer = normalizedBuffer;
 
     showLoadingModal('Ready!', 100);
 
@@ -1211,7 +1273,11 @@ bypassBtn.addEventListener('click', () => {
 // ============================================================================
 
 processBtn.addEventListener('click', async () => {
-  if (!fileState.selectedFilePath) return;
+  if (!audioNodes.buffer) {
+    statusMessage.textContent = '✗ No audio loaded';
+    statusMessage.className = 'status-message error';
+    return;
+  }
 
   const outputPath = await window.electronAPI.saveFile();
   if (!outputPath) return;
@@ -1249,37 +1315,25 @@ processBtn.addEventListener('click', async () => {
   };
 
   try {
-    // Read input file via IPC
     updateProgress(2);
-    statusMessage.textContent = 'Reading file...';
-    const inputData = await window.electronAPI.readFileData(fileState.selectedFilePath);
+    statusMessage.textContent = 'Preparing audio...';
 
     if (processingCancelled) {
       throw new Error('Cancelled');
     }
 
-    // Get input filename extension
-    const inputName = fileState.selectedFilePath.split(/[\\/]/).pop();
-    const outputName = 'output.wav';
-
-    // Process with FFmpeg.wasm
+    // Use Web Audio offline render (same processing chain as preview)
     updateProgress(5);
-    statusMessage.textContent = 'Loading FFmpeg...';
+    statusMessage.textContent = 'Rendering audio...';
 
-    const outputData = await processAudioWithFFmpeg(
-      new Uint8Array(inputData),
-      inputName,
-      outputName,
-      settings,
-      updateProgress
-    );
+    const outputData = await renderOffline(audioNodes.buffer, settings, updateProgress);
 
     if (processingCancelled) {
       throw new Error('Cancelled');
     }
 
-    // Write output file via IPC (pass Uint8Array directly - more efficient)
-    updateProgress(98);
+    // Write output file via IPC
+    updateProgress(95);
     statusMessage.textContent = 'Saving file...';
     await window.electronAPI.writeFileData(outputPath, outputData);
 
