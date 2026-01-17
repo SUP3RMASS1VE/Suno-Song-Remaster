@@ -23,9 +23,13 @@ A desktop app for mastering AI-generated music (Suno, Udio, etc.) to streaming-r
 
 ### Low End
 - **Clean Low End** - Removes sub-bass rumble below 30Hz
-- **Center Bass** - Makes bass frequencies mono for better speaker compatibility
+
+### Stereo
+- **Stereo Width** - Adjustable stereo image (0% mono to 200% extra wide) with real-time preview
+- **Mono Bass** - Narrows bass below 80Hz for better club/speaker compatibility
 
 ### Output
+- **Level Meter** - Real-time stereo peak metering with peak hold and overload indicator
 - **Real-time Preview** - Hear EQ and effect changes before exporting
 - **FX Bypass** - Toggle all effects to compare before/after
 - **Streaming Preset** - 44.1kHz/16-bit (Spotify, Apple Music, CD quality)
@@ -80,6 +84,23 @@ ISC
 
 ## Changelog
 
+### v1.2.0 (2026-01-16)
+
+**Stereo Processing**
+- Added real-time stereo width control (0-200%) with M/S matrix processing
+- Renamed "Center Bass" to "Mono Bass" for clarity
+- Stereo width now previews live via Web Audio API
+
+**Level Metering**
+- Added stereo level meter with separate L/R channel analysis
+- Peak hold display with configurable hold time
+- Overload indicator for clipping detection
+
+**UI Improvements**
+- Removed unicode icons from settings card headers for cleaner look
+- Updated grid layout to 5 columns to accommodate Stereo card
+- Changed Stereo card badge from "Export Only" to "Live"
+
 ### v1.1.0 (2026-01-17)
 
 **Major Refactor: Vite Build System**
@@ -94,7 +115,7 @@ ISC
 
 - Using single-threaded core (`@ffmpeg/core-st`) - no SharedArrayBuffer requirement
 - All FFmpeg files bundled locally (no CDN dependency at runtime)
-- Replaced `crossfeed` filter with `pan` filter (crossfeed unavailable in FFmpeg.wasm)
+- All FFmpeg audio filters available including crossfeed, stereotools, loudnorm
 - Added 60-second timeout for FFmpeg loading (prevents infinite hang)
 - Fixed Uint8Array handling for large file IPC transfers
 - Added `worker-src 'self' blob:` to Content Security Policy
