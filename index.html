@@ -255,6 +255,18 @@
   <!-- Tooltip element -->
   <div id="tooltip" class="tooltip"></div>
 
+  <!-- Loading Modal -->
+  <div id="loadingModal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-spinner"></div>
+      <div class="modal-text" id="loadingText">Loading...</div>
+      <div class="modal-progress">
+        <div class="modal-progress-bar" id="loadingProgressBar"></div>
+      </div>
+      <div class="modal-percent" id="loadingPercent">0%</div>
+    </div>
+  </div>
+
   <script type="module" src="/src/renderer.js"></script>
 </body>
 </html>

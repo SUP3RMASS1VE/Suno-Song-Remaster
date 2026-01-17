@@ -838,30 +838,52 @@ document.querySelectorAll('.preset-btn').forEach(btn => {
 // Audio File Loading
 // ============================================================================
 
-async function normalizeAudioInBackground(filePath) {
-  if (fileState.isNormalizing) return;
+// Loading modal elements
+const loadingModal = document.getElementById('loadingModal');
+const loadingText = document.getElementById('loadingText');
+const loadingProgressBar = document.getElementById('loadingProgressBar');
+const loadingPercent = document.getElementById('loadingPercent');
 
-  fileState.isNormalizing = true;
-  console.log('[Normalize] Starting background loudness normalization...');
+function showLoadingModal(text, percent) {
+  loadingModal.classList.remove('hidden');
+  loadingText.textContent = text;
+  loadingProgressBar.style.width = `${percent}%`;
+  loadingPercent.textContent = `${percent}%`;
+}
+
+function hideLoadingModal() {
+  loadingModal.classList.add('hidden');
+}
+
+async function loadAudioFile(filePath) {
+  const ctx = initAudioContext();
+
+  showLoadingModal('Loading audio...', 5);
 
   try {
     // Read file data
     const fileData = await window.electronAPI.readFileData(filePath);
     const inputData = new Uint8Array(fileData instanceof Uint8Array ? fileData : Object.values(fileData));
 
-    // Get input filename
-    const inputName = filePath.split(/[\\/]/).pop();
-    const outputName = 'normalized.wav';
+    showLoadingModal('Initializing FFmpeg...', 10);
 
     // Initialize FFmpeg if needed
     if (!ffmpegLoaded) {
       await initFFmpeg();
     }
 
+    showLoadingModal('Normalizing loudness...', 20);
+
+    // Get input filename
+    const inputName = filePath.split(/[\\/]/).pop();
+    const outputName = 'normalized.wav';
+
     // Write input file
     await ffmpeg.writeFile(inputName, inputData);
 
-    // Run loudnorm only
+    showLoadingModal('Normalizing loudness...', 30);
+
+    // Run loudnorm
     const args = [
       '-i', inputName,
       '-af', 'loudnorm=I=-14:TP=-1:LRA=11:linear=true',
@@ -873,61 +895,41 @@ async function normalizeAudioInBackground(filePath) {
 
     await ffmpeg.exec(args);
 
+    showLoadingModal('Decoding audio...', 80);
+
     // Read output
     const outputData = await ffmpeg.readFile(outputName);
 
-    // Cleanup
+    // Cleanup FFmpeg files
     await ffmpeg.deleteFile(inputName);
     await ffmpeg.deleteFile(outputName);
 
-    // Decode to AudioBuffer
-    const ctx = audioNodes.context || initAudioContext();
+    // Decode normalized audio to AudioBuffer
     const arrayBuffer = outputData.buffer.slice(
       outputData.byteOffset,
       outputData.byteOffset + outputData.byteLength
     );
 
-    fileState.normalizedBuffer = await ctx.decodeAudioData(arrayBuffer);
-    console.log('[Normalize] Background normalization complete');
+    // Store as the main buffer (already normalized)
+    audioNodes.buffer = await ctx.decodeAudioData(arrayBuffer);
+    fileState.normalizedBuffer = audioNodes.buffer;
 
-    // If normalize is checked and we're not playing, switch to normalized buffer
-    if (normalizeLoudness.checked && !playerState.isPlaying) {
-      audioNodes.buffer = fileState.normalizedBuffer;
-    }
+    showLoadingModal('Preparing original...', 90);
 
-  } catch (error) {
-    console.error('[Normalize] Background normalization failed:', error);
-  } finally {
-    fileState.isNormalizing = false;
-  }
-}
-
-async function loadAudioFile(filePath) {
-  const ctx = initAudioContext();
-
-  try {
-    // Use IPC to read file data (more reliable than direct file:// fetch)
-    const fileData = await window.electronAPI.readFileData(filePath);
-
-    // Handle IPC serialization - may return Uint8Array or serialized object
-    let arrayBuffer;
-    if (fileData instanceof Uint8Array) {
-      arrayBuffer = fileData.buffer.slice(fileData.byteOffset, fileData.byteOffset + fileData.byteLength);
-    } else if (fileData.buffer) {
-      // Already has a buffer property
-      arrayBuffer = fileData.buffer.slice(fileData.byteOffset || 0, (fileData.byteOffset || 0) + fileData.byteLength);
+    // Also decode original for toggle (read file again)
+    const origData = await window.electronAPI.readFileData(filePath);
+    let origArrayBuffer;
+    if (origData instanceof Uint8Array) {
+      origArrayBuffer = origData.buffer.slice(origData.byteOffset, origData.byteOffset + origData.byteLength);
+    } else if (origData.buffer) {
+      origArrayBuffer = origData.buffer.slice(origData.byteOffset || 0, (origData.byteOffset || 0) + origData.byteLength);
     } else {
-      // Serialized as plain object with numeric keys
-      const uint8 = new Uint8Array(Object.values(fileData));
-      arrayBuffer = uint8.buffer;
+      const uint8 = new Uint8Array(Object.values(origData));
+      origArrayBuffer = uint8.buffer;
     }
+    fileState.originalBuffer = await ctx.decodeAudioData(origArrayBuffer);
 
-    // Store original buffer
-    fileState.originalBuffer = await ctx.decodeAudioData(arrayBuffer);
-    fileState.normalizedBuffer = null; // Reset normalized buffer
-
-    // Use original buffer initially (or normalized if checkbox is on and we have it)
-    audioNodes.buffer = fileState.originalBuffer;
+    showLoadingModal('Ready!', 100);
 
     createAudioChain();
 
@@ -940,12 +942,15 @@ async function loadAudioFile(filePath) {
     stopBtn.disabled = false;
     processBtn.disabled = false;
 
-    // Always start background normalization (it's on by default)
-    normalizeAudioInBackground(filePath);
+    // Hide modal after brief delay
+    setTimeout(() => hideLoadingModal(), 300);
 
     return true;
   } catch (error) {
     console.error('Error loading audio:', error);
+    hideLoadingModal();
+    statusMessage.textContent = `Error: ${error.message}`;
+    statusMessage.className = 'status-message error';
     return false;
   }
 }
