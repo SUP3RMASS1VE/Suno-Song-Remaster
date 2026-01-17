@@ -188,11 +188,9 @@ function buildFilterChain(settings) {
     filters.push('acompressor=threshold=0.125:ratio=3:attack=20:release=250:makeup=1');
   }
 
-  // 8. Loudness normalization
-  if (settings.normalizeLoudness) {
-    // linear=true preserves tonal character better (no dynamic processing)
-    filters.push('loudnorm=I=-14:TP=-1:LRA=11:linear=true');
-  }
+  // 8. Loudness normalization - SKIP if already normalized on load
+  // The file is pre-normalized during load, so we don't need to do it again on export
+  // This prevents double-normalization which degrades audio quality
 
   // 9. Final limiter
   if (settings.truePeakLimit) {
