@@ -6,16 +6,190 @@ const os = require('os');
 
 // Get ffmpeg path - handle both dev and packaged app
 function getFfmpegPath() {
-  const ffmpegStatic = require('ffmpeg-static');
-  
-  // In packaged app, ffmpeg-static is unpacked from asar
-  if (app.isPackaged) {
-    return ffmpegStatic.replace('app.asar', 'app.asar.unpacked');
+  try {
+    let ffmpegPath = require('ffmpeg-static');
+    
+    console.log('Initial ffmpeg-static path:', ffmpegPath);
+    console.log('Is packaged:', app.isPackaged);
+    console.log('App path:', app.getAppPath());
+    console.log('Resources path:', process.resourcesPath);
+    
+    // In packaged app, adjust the path for asar unpacking
+    if (app.isPackaged && ffmpegPath) {
+      // The path from ffmpeg-static will be inside app.asar
+      // We need to redirect it to app.asar.unpacked
+      if (ffmpegPath.includes('app.asar')) {
+        // Replace app.asar with app.asar.unpacked
+        ffmpegPath = ffmpegPath.replace(/app\.asar([\/\\])/, 'app.asar.unpacked$1');
+      } else {
+        // If path doesn't contain app.asar, construct it manually
+        const relativePath = path.relative(app.getAppPath(), ffmpegPath);
+        ffmpegPath = path.join(process.resourcesPath, 'app.asar.unpacked', relativePath);
+      }
+      
+      console.log('Adjusted path for packaged app:', ffmpegPath);
+    }
+    
+    // Verify the file exists
+    if (!fs.existsSync(ffmpegPath)) {
+      console.error('FFmpeg not found at:', ffmpegPath);
+      
+      // Try to find it in common locations
+      const searchPaths = [
+        path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'ffmpeg-static', 'ffmpeg.exe'),
+        path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'ffmpeg-static', 'ffmpeg'),
+        path.join(app.getAppPath(), 'node_modules', 'ffmpeg-static', 'ffmpeg.exe'),
+        path.join(app.getAppPath(), 'node_modules', 'ffmpeg-static', 'ffmpeg'),
+      ];
+      
+      for (const searchPath of searchPaths) {
+        console.log('Searching:', searchPath);
+        if (fs.existsSync(searchPath)) {
+          console.log('✓ Found ffmpeg at:', searchPath);
+          ffmpegPath = searchPath;
+          break;
+        }
+      }
+      
+      if (!fs.existsSync(ffmpegPath)) {
+        throw new Error('FFmpeg binary not found. Searched paths: ' + searchPaths.join(', '));
+      }
+    }
+    
+    console.log('✓ Final ffmpeg path:', ffmpegPath);
+    console.log('✓ File exists:', fs.existsSync(ffmpegPath));
+    
+    return ffmpegPath;
+  } catch (error) {
+    console.error('Error in getFfmpegPath:', error);
+    throw error;
   }
-  return ffmpegStatic;
 }
 
-ffmpeg.setFfmpegPath(getFfmpegPath());
+// Get ffprobe path
+function getFfprobePath() {
+  try {
+    let ffprobePath = require('ffprobe-static').path;
+    
+    console.log('Initial ffprobe-static path:', ffprobePath);
+    
+    // In packaged app, adjust the path for asar unpacking
+    if (app.isPackaged && ffprobePath) {
+      if (ffprobePath.includes('app.asar')) {
+        ffprobePath = ffprobePath.replace(/app\.asar([\/\\])/, 'app.asar.unpacked$1');
+      } else {
+        const relativePath = path.relative(app.getAppPath(), ffprobePath);
+        ffprobePath = path.join(process.resourcesPath, 'app.asar.unpacked', relativePath);
+      }
+      
+      console.log('Adjusted ffprobe path for packaged app:', ffprobePath);
+    }
+    
+    if (!fs.existsSync(ffprobePath)) {
+      console.error('FFprobe not found at:', ffprobePath);
+      
+      // Try to find it in common locations
+      const searchPaths = [
+        path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'ffprobe-static', 'bin', process.platform, process.arch, 'ffprobe.exe'),
+        path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'ffprobe-static', 'bin', process.platform, process.arch, 'ffprobe'),
+        path.join(app.getAppPath(), 'node_modules', 'ffprobe-static', 'bin', process.platform, process.arch, 'ffprobe.exe'),
+        path.join(app.getAppPath(), 'node_modules', 'ffprobe-static', 'bin', process.platform, process.arch, 'ffprobe'),
+      ];
+      
+      for (const searchPath of searchPaths) {
+        if (fs.existsSync(searchPath)) {
+          console.log('✓ Found ffprobe at:', searchPath);
+          ffprobePath = searchPath;
+          break;
+        }
+      }
+    }
+    
+    console.log('✓ Final ffprobe path:', ffprobePath);
+    console.log('✓ File exists:', fs.existsSync(ffprobePath));
+    
+    return ffprobePath;
+  } catch (error) {
+    console.error('Error in getFfprobePath:', error);
+    throw error;
+  }
+}
+
+// Test if ffmpeg actually works
+function testFfmpeg(ffmpegPath) {
+  return new Promise((resolve) => {
+    const { execFile } = require('child_process');
+    execFile(ffmpegPath, ['-version'], { timeout: 5000 }, (error, stdout, stderr) => {
+      if (error) {
+        console.error('FFmpeg test failed:', error);
+        console.error('Error code:', error.code);
+        console.error('Error message:', error.message);
+        if (stderr) console.error('Stderr:', stderr);
+        resolve({ success: false, error: error.message });
+      } else {
+        console.log('✓ FFmpeg test passed');
+        const versionLine = stdout.split('\n')[0];
+        console.log('FFmpeg version:', versionLine);
+        resolve({ success: true, version: versionLine });
+      }
+    });
+  });
+}
+
+// Initialize ffmpeg
+let ffmpegInitialized = false;
+let ffmpegTestResult = null;
+
+async function initializeFfmpeg() {
+  try {
+    const ffmpegPath = getFfmpegPath();
+    
+    // Test if ffmpeg works
+    ffmpegTestResult = await testFfmpeg(ffmpegPath);
+    if (!ffmpegTestResult.success) {
+      throw new Error('FFmpeg exists but cannot execute: ' + ffmpegTestResult.error + 
+        '\n\nThis is usually caused by:\n' +
+        '• Windows Defender or antivirus blocking the file\n' +
+        '• Missing Visual C++ Redistributables\n' +
+        '• File permissions issue');
+    }
+    
+    // Set both ffmpeg and ffprobe paths
+    ffmpeg.setFfmpegPath(ffmpegPath);
+    
+    const ffprobePath = getFfprobePath();
+    if (fs.existsSync(ffprobePath)) {
+      ffmpeg.setFfprobePath(ffprobePath);
+      console.log('✓ FFprobe path set:', ffprobePath);
+    } else {
+      console.warn('⚠ FFprobe not found at:', ffprobePath);
+      throw new Error('FFprobe binary not found');
+    }
+    
+    ffmpegInitialized = true;
+    console.log('✓ FFmpeg initialized successfully');
+    return true;
+  } catch (error) {
+    console.error('✗ Failed to initialize ffmpeg:', error);
+    
+    // Show error dialog to user
+    setTimeout(() => {
+      dialog.showErrorBox(
+        'Audio Processing Error', 
+        'Failed to initialize the audio processing engine.\n\n' +
+        error.message + '\n\n' +
+        'Solutions:\n' +
+        '1. Add the app folder to your antivirus exclusions\n' +
+        '2. Run as administrator\n' +
+        '3. Install Visual C++ Redistributables from:\n' +
+        '   https://aka.ms/vs/17/release/vc_redist.x64.exe\n' +
+        '4. Reinstall the application'
+      );
+    }, 1000);
+    
+    return false;
+  }
+}
 
 let mainWindow;
 const previewDir = path.join(os.tmpdir(), 'spotify-worthy-preview');
@@ -42,6 +216,18 @@ function createWindow() {
   });
 
   mainWindow.loadFile('index.html');
+  
+  // Open DevTools in development or if ELECTRON_DEBUG is set
+  if (!app.isPackaged || process.env.ELECTRON_DEBUG) {
+    mainWindow.webContents.openDevTools();
+  }
+  
+  // Log any console errors from renderer
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    if (level >= 2) { // 2 = warning, 3 = error
+      console.log(`Renderer [${level}]:`, message);
+    }
+  });
 }
 
 // Window control handlers
@@ -61,7 +247,53 @@ ipcMain.handle('window-close', () => {
   mainWindow.close();
 });
 
+// Get system info for debugging
+ipcMain.handle('get-system-info', () => {
+  try {
+    let ffmpegPath = 'unknown';
+    let ffmpegExists = false;
+    let ffprobePath = 'unknown';
+    let ffprobeExists = false;
+    
+    try {
+      ffmpegPath = getFfmpegPath();
+      ffmpegExists = fs.existsSync(ffmpegPath);
+    } catch (e) {
+      ffmpegPath = 'Error: ' + e.message;
+    }
+    
+    try {
+      ffprobePath = getFfprobePath();
+      ffprobeExists = fs.existsSync(ffprobePath);
+    } catch (e) {
+      ffprobePath = 'Error: ' + e.message;
+    }
+    
+    return {
+      platform: process.platform,
+      arch: process.arch,
+      isPackaged: app.isPackaged,
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      ffmpegPath: ffmpegPath,
+      ffmpegExists: ffmpegExists,
+      ffprobePath: ffprobePath,
+      ffprobeExists: ffprobeExists,
+      ffmpegInitialized: ffmpegInitialized,
+      ffmpegTestResult: ffmpegTestResult,
+      electronVersion: process.versions.electron,
+      nodeVersion: process.versions.node
+    };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
 app.whenReady().then(createWindow);
+
+app.whenReady().then(async () => {
+  await initializeFfmpeg();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -229,16 +461,48 @@ ipcMain.handle('process-audio', async (event, { inputPath, outputPath, settings 
   });
 });
 
+// Read audio file
+ipcMain.handle('read-audio-file', async (event, filePath) => {
+  if (!filePath || !fs.existsSync(filePath)) {
+    throw new Error('File not found');
+  }
+  
+  try {
+    const buffer = fs.readFileSync(filePath);
+    return buffer;
+  } catch (error) {
+    throw new Error(`Failed to read file: ${error.message}`);
+  }
+});
+
 // Analyze audio file
 ipcMain.handle('analyze-audio', async (event, filePath) => {
+  if (!ffmpegInitialized) {
+    throw new Error('Audio processing engine not initialized. Please restart the application or check Debug Info.');
+  }
+  
+  if (!filePath) {
+    throw new Error('No input specified');
+  }
+  
+  if (!fs.existsSync(filePath)) {
+    throw new Error('File not found: ' + filePath);
+  }
+  
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(filePath, (err, metadata) => {
       if (err) {
-        reject({ error: err.message });
+        console.error('ffprobe error:', err);
+        reject(new Error('Failed to analyze audio file: ' + err.message));
         return;
       }
       
       const audioStream = metadata.streams.find(s => s.codec_type === 'audio');
+      if (!audioStream) {
+        reject(new Error('No audio stream found in file'));
+        return;
+      }
+      
       resolve({
         duration: metadata.format.duration,
         bitRate: metadata.format.bit_rate,

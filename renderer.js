@@ -303,9 +303,9 @@ async function loadAudioFile(filePath) {
   const ctx = initAudioContext();
   
   try {
-    const response = await fetch(`file://${filePath}`);
-    const arrayBuffer = await response.arrayBuffer();
-    audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    // Use IPC to read file instead of fetch (works in packaged apps)
+    const arrayBuffer = await window.electronAPI.readAudioFile(filePath);
+    audioBuffer = await ctx.decodeAudioData(arrayBuffer.buffer);
     
     createAudioChain();
     
@@ -321,6 +321,8 @@ async function loadAudioFile(filePath) {
     return true;
   } catch (error) {
     console.error('Error loading audio:', error);
+    statusMessage.textContent = `✗ Error loading audio: ${error.message || error}`;
+    statusMessage.className = 'status-message error';
     return false;
   }
 }
@@ -469,24 +471,50 @@ changeFileBtn.addEventListener('click', async () => {
 
 // Load file and update UI
 async function loadFile(filePath) {
+  if (!filePath) {
+    console.error('No file path provided to loadFile');
+    return;
+  }
+  
   selectedFilePath = filePath;
   
-  // Get file info
-  const fileInfo = await window.electronAPI.analyzeAudio(filePath);
-  
-  // Update UI
-  const name = filePath.split(/[\\/]/).pop();
-  fileName.textContent = name;
-  fileMeta.textContent = `${fileInfo.codec?.toUpperCase()} • ${Math.round(fileInfo.sampleRate / 1000)}kHz • ${formatTime(fileInfo.duration)}`;
-  
-  fileZoneContent.classList.add('hidden');
-  fileLoaded.classList.remove('hidden');
-  
-  // Load into Web Audio
-  await loadAudioFile(filePath);
-  
-  // Update checklist
-  updateChecklist();
+  try {
+    // Get file info
+    const fileInfo = await window.electronAPI.analyzeAudio(filePath);
+    
+    // Update UI
+    const name = filePath.split(/[\\/]/).pop();
+    fileName.textContent = name;
+    fileMeta.textContent = `${fileInfo.codec?.toUpperCase()} • ${Math.round(fileInfo.sampleRate / 1000)}kHz • ${formatTime(fileInfo.duration)}`;
+    
+    fileZoneContent.classList.add('hidden');
+    fileLoaded.classList.remove('hidden');
+    
+    // Load into Web Audio
+    await loadAudioFile(filePath);
+    
+    // Update checklist
+    updateChecklist();
+  } catch (error) {
+    console.error('Error loading file:', error);
+    
+    // Show user-friendly error message
+    let errorMsg = 'Unknown error';
+    if (error.message) {
+      errorMsg = error.message;
+    } else if (typeof error === 'string') {
+      errorMsg = error;
+    }
+    
+    // Check for common issues
+    if (errorMsg.includes('ffprobe') || errorMsg.includes('analyze')) {
+      errorMsg = 'Audio processing failed. FFmpeg may not be installed correctly. Click Debug Info button for details.';
+    }
+    
+    statusMessage.textContent = `✗ Error: ${errorMsg}`;
+    statusMessage.className = 'status-message error';
+    statusMessage.style.display = 'block';
+  }
 }
 
 // Drag and drop
@@ -505,9 +533,15 @@ dropZone.addEventListener('drop', async (e) => {
   
   const file = e.dataTransfer.files[0];
   if (file && /\.(mp3|wav|flac|aac|m4a)$/i.test(file.name)) {
-    stopAudio();
-    pauseTime = 0;
-    await loadFile(file.path);
+    // Use webUtils to get the real file path in Electron
+    const filePath = window.electronAPI.getPathForFile(file);
+    if (filePath) {
+      stopAudio();
+      pauseTime = 0;
+      await loadFile(filePath);
+    } else {
+      console.error('Could not get file path from dropped file');
+    }
   }
 });
 
@@ -695,3 +729,43 @@ document.querySelectorAll('[data-tip]').forEach(el => {
 
 // Initialize
 updateChecklist();
+
+// Debug button
+document.getElementById('debugBtn').addEventListener('click', async () => {
+  const info = await window.electronAPI.getSystemInfo();
+  const infoText = `
+System Information:
+-------------------
+Platform: ${info.platform || 'unknown'}
+Architecture: ${info.arch || 'unknown'}
+Is Packaged: ${info.isPackaged || 'unknown'}
+Electron: ${info.electronVersion || 'unknown'}
+Node: ${info.nodeVersion || 'unknown'}
+
+Paths:
+------
+App Path: ${info.appPath || 'unknown'}
+Resources Path: ${info.resourcesPath || 'unknown'}
+
+FFmpeg Status:
+--------------
+Initialized: ${info.ffmpegInitialized ? 'YES ✓' : 'NO ✗'}
+
+FFmpeg:
+Path: ${info.ffmpegPath || 'unknown'}
+Exists: ${info.ffmpegExists ? 'YES ✓' : 'NO ✗'}
+
+FFprobe:
+Path: ${info.ffprobePath || 'unknown'}
+Exists: ${info.ffprobeExists ? 'YES ✓' : 'NO ✗'}
+
+${info.ffmpegTestResult ? 'Test: ' + (info.ffmpegTestResult.success ? '✓ PASSED' : '✗ FAILED - ' + info.ffmpegTestResult.error) : ''}
+
+${info.error ? '\nERROR: ' + info.error : ''}
+
+${!info.ffmpegInitialized ? '\n⚠️ Audio processing not working!\n\nSolutions:\n1. Add app to antivirus exclusions\n2. Run as administrator\n3. Install VC++ Redistributables' : ''}
+  `.trim();
+  
+  console.log(infoText);
+  alert(infoText);
+});
