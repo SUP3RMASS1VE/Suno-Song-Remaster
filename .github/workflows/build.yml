@@ -17,6 +17,7 @@ jobs:
             platform: mac
           - os: ubuntu-latest
             platform: linux
+      fail-fast: false  # Don't cancel other builds if one fails
 
     runs-on: ${{ matrix.os }}
 
@@ -43,6 +44,7 @@ jobs:
         run: npm run build:${{ matrix.platform }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false  # Skip code signing
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

@@ -57,7 +57,8 @@
     },
     "mac": {
       "target": "dmg",
-      "icon": "image.png"
+      "icon": "image.png",
+      "identity": null
     },
     "linux": {
       "target": "AppImage",
