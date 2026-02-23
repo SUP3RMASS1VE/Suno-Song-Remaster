@@ -1058,14 +1058,24 @@ body {
   border-color: var(--theme-accent);
 }
 
-/* Status Message */
+/* Status Message — fixed toast overlay */
 .status-message {
-  text-align: center;
-  padding: 8px 12px;
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 20px;
   font-size: 11px;
   border-radius: 6px;
   font-weight: 500;
-  flex-shrink: 0;
+  z-index: 1000;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.status-message.visible {
+  opacity: 1;
 }
 
 .status-message:empty {
@@ -1163,6 +1173,30 @@ body {
   opacity: 1;
 }
 
+/* Spectrogram */
+.spectrogram-container {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+#spectrogramCanvas {
+  width: 100%;
+  height: 100px;
+  background: #0a0a1a;
+  border-radius: 6px;
+  display: block;
+  border: 1px solid var(--border);
+}
+
+.spectrogram-labels {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 8px 0;
+  font-size: 9px;
+  color: var(--text-muted);
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 5px;
@@ -1182,9 +1216,47 @@ body {
   background: rgba(168, 85, 247, 0.5);
 }
 
+/* Keyboard Shortcuts Hint */
+.shortcuts-hint {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  padding: 4px 0;
+  flex-shrink: 0;
+}
+
+.shortcuts-hint span {
+  font-size: 9px;
+  color: var(--text-muted);
+  background: var(--bg-card);
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--border-subtle);
+}
+
+/* Focus Visible (keyboard accessibility) */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--theme-accent);
+  outline-offset: 2px;
+}
+
+/* Clip indicator text label for screen readers + visual */
+.clip-indicator.visible {
+  opacity: 1;
+  font-weight: 700;
+}
+
 button {
   transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
   outline: none;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--theme-accent);
+  outline-offset: 2px;
 }
 
 button:active:not(:disabled) {

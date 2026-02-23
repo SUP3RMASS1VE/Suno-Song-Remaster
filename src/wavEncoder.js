@@ -1,39 +1,50 @@
 /**
  * Pure JavaScript WAV Encoder
- * Supports 16-bit and 24-bit PCM encoding
+ * Supports 16-bit and 24-bit PCM encoding with optional TPDF dithering
  */
+
+/**
+ * Generate TPDF (Triangular Probability Density Function) dither noise
+ * Two uniform random values subtracted gives triangular distribution
+ * @returns {number} Dither value in range [-1, 1]
+ */
+function tpdfDither() {
+  return Math.random() - Math.random();
+}
 
 /**
  * Encode AudioBuffer to WAV format
  * @param {AudioBuffer} audioBuffer - The audio buffer to encode
  * @param {Object} options - Encoding options
  * @param {number} options.bitDepth - 16 or 24 bit
+ * @param {boolean} options.dither - Enable TPDF dithering (default: true for 16-bit)
  * @returns {ArrayBuffer} - WAV file as ArrayBuffer
  */
 export function encodeWAV(audioBuffer, options = {}) {
   const bitDepth = options.bitDepth || 16;
+  const dither = options.dither !== undefined ? options.dither : (bitDepth === 16);
   const numChannels = audioBuffer.numberOfChannels;
   const sampleRate = audioBuffer.sampleRate;
   const length = audioBuffer.length;
-  
+
   // Interleave channels
   const interleaved = interleaveChannels(audioBuffer);
-  
+
   // Calculate sizes
   const bytesPerSample = bitDepth / 8;
   const dataSize = interleaved.length * bytesPerSample;
   const headerSize = 44;
   const fileSize = headerSize + dataSize;
-  
+
   // Create buffer
   const buffer = new ArrayBuffer(fileSize);
   const view = new DataView(buffer);
-  
+
   // Write WAV header
   writeString(view, 0, 'RIFF');
   view.setUint32(4, fileSize - 8, true);
   writeString(view, 8, 'WAVE');
-  
+
   // fmt chunk
   writeString(view, 12, 'fmt ');
   view.setUint32(16, 16, true); // chunk size
@@ -43,37 +54,41 @@ export function encodeWAV(audioBuffer, options = {}) {
   view.setUint32(28, sampleRate * numChannels * bytesPerSample, true); // byte rate
   view.setUint16(32, numChannels * bytesPerSample, true); // block align
   view.setUint16(34, bitDepth, true);
-  
+
   // data chunk
   writeString(view, 36, 'data');
   view.setUint32(40, dataSize, true);
-  
+
   // Write audio data
   let offset = 44;
-  
+
   if (bitDepth === 16) {
+    const maxVal = 0x7FFF;
+    const minVal = -0x8000;
     for (let i = 0; i < interleaved.length; i++) {
-      // Clamp and convert to 16-bit signed integer
       const sample = Math.max(-1, Math.min(1, interleaved[i]));
-      const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-      view.setInt16(offset, int16, true);
+      // Apply TPDF dither: add 1 LSB of triangular noise before quantization
+      const scaled = sample * maxVal + (dither ? tpdfDither() : 0);
+      const quantized = Math.max(minVal, Math.min(maxVal, Math.round(scaled)));
+      view.setInt16(offset, quantized, true);
       offset += 2;
     }
   } else if (bitDepth === 24) {
+    const maxVal = 0x7FFFFF;
+    const minVal = -0x800000;
     for (let i = 0; i < interleaved.length; i++) {
-      // Clamp and convert to 24-bit signed integer
       const sample = Math.max(-1, Math.min(1, interleaved[i]));
-      const int24 = sample < 0 ? sample * 0x800000 : sample * 0x7FFFFF;
-      const int24Clamped = Math.floor(int24);
-      
+      const scaled = sample * maxVal + (dither ? tpdfDither() : 0);
+      const quantized = Math.max(minVal, Math.min(maxVal, Math.round(scaled)));
+
       // Write 24-bit little-endian
-      view.setUint8(offset, int24Clamped & 0xFF);
-      view.setUint8(offset + 1, (int24Clamped >> 8) & 0xFF);
-      view.setUint8(offset + 2, (int24Clamped >> 16) & 0xFF);
+      view.setUint8(offset, quantized & 0xFF);
+      view.setUint8(offset + 1, (quantized >> 8) & 0xFF);
+      view.setUint8(offset + 2, (quantized >> 16) & 0xFF);
       offset += 3;
     }
   }
-  
+
   return buffer;
 }
 
@@ -84,18 +99,18 @@ function interleaveChannels(audioBuffer) {
   const numChannels = audioBuffer.numberOfChannels;
   const length = audioBuffer.length;
   const interleaved = new Float32Array(length * numChannels);
-  
+
   const channels = [];
   for (let ch = 0; ch < numChannels; ch++) {
     channels.push(audioBuffer.getChannelData(ch));
   }
-  
+
   for (let i = 0; i < length; i++) {
     for (let ch = 0; ch < numChannels; ch++) {
       interleaved[i * numChannels + ch] = channels[ch][i];
     }
   }
-  
+
   return interleaved;
 }
 

@@ -12,10 +12,10 @@ if (!fs.existsSync(previewDir)) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1050,
-    height: 660,
-    minWidth: 1000,
-    minHeight: 620,
+    width: 1100,
+    height: 800,
+    minWidth: 1050,
+    minHeight: 750,
     frame: false,
     titleBarStyle: 'hidden',
     webPreferences: {

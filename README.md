@@ -60,9 +60,46 @@ npm run electron:build:linux  # Linux
 
 ## Version
 
-v1.2.0
+v1.2.2
+
+## Changelog
+
+### v1.2.2
+
+**Bug Fixes**
+- Fixed incomplete spectrogram rendering (was truncated mid-function)
+- Fixed stereo width being applied twice during export (preview and export now match)
+- Fixed seek race condition — `isSeeking` flag now properly guards playback restart
+- Fixed `stopAudio` ghost callbacks from `onended` firing after stop
+
+**Architecture**
+- Extracted shared `createProcessingNodes()` factory for both preview and export chains (DRY)
+- Shared `configureFilterNodes()` accepts settings object — no more duplicated filter setup
+- Reduced analyser FFT size to 512 for level meters (faster response)
+- Spectrogram throttled to ~30fps with offscreen canvas created once outside draw loop
+
+**New Features**
+- Undo/redo system (Ctrl+Z / Ctrl+Shift+Z) with 50-level history
+- Settings persistence via localStorage — all settings and EQ presets survive restarts
+- Keyboard shortcuts: Space (play/pause), Escape (stop), B (bypass), ←→ (seek ±5s), Ctrl+E (export)
+- Shortcuts hint bar in the UI
+- Status messages now appear as floating toasts that auto-dismiss
+
+**Audio Quality**
+- TPDF dithering for 16-bit WAV exports (reduces quantization artifacts)
+- Proper 44.1kHz K-weighting filter coefficients for LUFS measurement
+
+**Accessibility**
+- ARIA labels on all interactive controls
+- ARIA roles on meters, regions, status areas, and progress bars
+- `focus-visible` outlines for keyboard navigation
+- Decorative elements marked `aria-hidden`
+
+### v1.2.0
+- Initial release
 
 ## License
 
 ISC
+
 
