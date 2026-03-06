@@ -56,8 +56,7 @@ npm run electron:dev
 
 # Build for your platform
 npm run electron:build:win    # Windows
-npm run electron:build:mac    # macOS
-npm run electron:build:linux  # Linux
+npm run electron:build:mac    # macOSnpm run electron:build:linux  # Linux
 ```
 
 ## Tech Stack
@@ -68,11 +67,14 @@ npm run electron:build:linux  # Linux
 - ITU-R BS.1770-4 compliant LUFS measurement
 - Native JavaScript WAV encoder
 
-## Version
-
-v2.0.0
 
 ## Changelog
+
+### v2.0.1
+
+**Bug Fixes**
+- Fixed metadata tab file list being too narrow to read filenames with many songs queued
+- Widened file list panel, increased font size, and expanded scroll area for better readability
 
 ### v2.0.0
 
@@ -128,7 +130,3 @@ v2.0.0
 ## License
 
 ISC
-
-
-
-

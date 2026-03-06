@@ -1,6 +1,6 @@
 {
   "name": "ai-music-remastering",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "AI-powered audio mastering app for music production",
   "main": "electron/main.js",
   "scripts": {

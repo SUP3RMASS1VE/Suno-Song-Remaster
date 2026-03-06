@@ -1472,7 +1472,7 @@ body {
 /* Metadata Editor */
 .meta-layout {
   display: grid;
-  grid-template-columns: 180px 1fr;
+  grid-template-columns: 220px 1fr;
   gap: 8px;
   min-height: 120px;
 }
@@ -1481,7 +1481,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 180px;
+  max-height: 200px;
   overflow-y: auto;
   border-right: 1px solid var(--border-subtle);
   padding-right: 8px;
@@ -1489,7 +1489,7 @@ body {
 
 .meta-file-item {
   padding: 5px 8px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-secondary);
   border-radius: 4px;
   cursor: pointer;
@@ -1498,6 +1498,8 @@ body {
   text-overflow: ellipsis;
   transition: all 0.15s ease;
   border: 1px solid transparent;
+  min-height: 26px;
+  line-height: 1.4;
 }
 
 .meta-file-item:hover {
