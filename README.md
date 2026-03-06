@@ -5,6 +5,8 @@ A professional desktop app for mastering AI-generated music to streaming-ready q
 
 ## Features
 
+- **Batch Processing** - Queue multiple files, apply the same settings, and export all at once
+- **Metadata Editor** - Add title, artist, album, genre, year, track number, and comments per file
 - **Loudness Normalization** - Adjustable target LUFS (-20 to -6 LUFS)
 - **True Peak Limiting** - Prevents clipping with adjustable ceiling
 - **Input Gain Control** - Adjust input level before processing (-12 to +12 dB)
@@ -12,9 +14,9 @@ A professional desktop app for mastering AI-generated music to streaming-ready q
 - **5-Band EQ** - Fine-tune with visual faders and presets (Flat, Vocal Boost, Bass Boost, Bright, Warm, AI Fix)
 - **Quick Fix Tools** - Glue compression, clean low end
 - **Polish Effects** - Cut mud, add air, tame harshness
-- **Real-time Preview** - Hear all changes live before exporting
+- **Real-time Preview** - Hear all changes live before exporting, preview any queued file
 - **Clipping Detection** - Visual CLIP indicators on meters
-- **High-Quality Export** - WAV output at 44.1/48kHz, 16/24-bit
+- **High-Quality Export** - WAV output at 44.1/48kHz, 16/24-bit with embedded metadata
 
 ## Download
 
@@ -30,7 +32,15 @@ Get the latest release for your platform:
 2. Preview with the built-in player
 3. Adjust EQ, loudness, and mastering settings
 4. Toggle FX bypass to compare before/after
-5. Click "Export WAV"
+5. Click "Export WAV" for a single file
+
+### Batch Processing
+
+1. Click "+ Add Files" or drag multiple files into the batch queue
+2. Preview any queued file by clicking the ▶ button to load it into the player
+3. Switch to the "Metadata" tab to add tags (title, artist, album, etc.) per file
+4. Use "Apply to All" to copy metadata across the entire queue
+5. Click "Export All" and choose an output folder
 
 ## Building from Source
 
@@ -60,9 +70,26 @@ npm run electron:build:linux  # Linux
 
 ## Version
 
-v1.2.2
+v2.0.0
 
 ## Changelog
+
+### v2.0.0
+
+**New Features**
+- Batch processing queue — add multiple files, apply the same mastering settings, and export all at once
+- Per-file metadata editor with tabbed UI (title, artist, album, genre, year, track #, comment)
+- "Apply to All" button to copy metadata across the entire queue
+- WAV metadata embedding via LIST/INFO chunks (INAM, IART, IPRD, IGNR, ICRD, ITRK, ICMT)
+- Queue preview — click ▶ on any queued file to load it into the player and audition before exporting
+- Files loaded into the player are automatically added to the batch queue
+- Single-file "Export WAV" now includes metadata if the file has tags set in the queue
+- Multi-file and directory selection dialogs for batch workflows
+
+**Improvements**
+- UI yields to the event loop between batch processing steps to prevent freezing
+- Batch progress shows per-file status (pending, processing, done, error) and current filename
+- Currently loaded file is highlighted in the queue with a "Loaded" indicator
 
 ### v1.2.2
 
@@ -101,6 +128,7 @@ v1.2.2
 ## License
 
 ISC
+
 
 
 
