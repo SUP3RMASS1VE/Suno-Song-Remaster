@@ -18,6 +18,7 @@ function tpdfDither() {
  * @param {Object} options - Encoding options
  * @param {number} options.bitDepth - 16 or 24 bit
  * @param {boolean} options.dither - Enable TPDF dithering (default: true for 16-bit)
+ * @param {Object} options.metadata - Optional metadata { title, artist, album, genre, year, track, comment }
  * @returns {ArrayBuffer} - WAV file as ArrayBuffer
  */
 export function encodeWAV(audioBuffer, options = {}) {
@@ -33,8 +34,13 @@ export function encodeWAV(audioBuffer, options = {}) {
   // Calculate sizes
   const bytesPerSample = bitDepth / 8;
   const dataSize = interleaved.length * bytesPerSample;
+
+  // Build LIST/INFO chunk for metadata
+  const infoChunkData = buildInfoChunk(options.metadata);
+  const infoChunkSize = infoChunkData ? infoChunkData.byteLength : 0;
+
   const headerSize = 44;
-  const fileSize = headerSize + dataSize;
+  const fileSize = headerSize + dataSize + infoChunkSize;
 
   // Create buffer
   const buffer = new ArrayBuffer(fileSize);
@@ -89,7 +95,90 @@ export function encodeWAV(audioBuffer, options = {}) {
     }
   }
 
+  // Append LIST/INFO metadata chunk
+  if (infoChunkData) {
+    const infoBytes = new Uint8Array(infoChunkData);
+    for (let i = 0; i < infoBytes.length; i++) {
+      view.setUint8(offset + i, infoBytes[i]);
+    }
+  }
+
   return buffer;
+}
+
+/**
+ * Build a LIST/INFO chunk from metadata object
+ * WAV INFO sub-chunks: INAM=title, IART=artist, IPRD=album, IGNR=genre, ICRD=year, ITRK=track, ICMT=comment
+ * @returns {ArrayBuffer|null}
+ */
+function buildInfoChunk(metadata) {
+  if (!metadata) return null;
+
+  const tags = [];
+  const tagMap = {
+    title: 'INAM',
+    artist: 'IART',
+    album: 'IPRD',
+    genre: 'IGNR',
+    year: 'ICRD',
+    track: 'ITRK',
+    comment: 'ICMT'
+  };
+
+  for (const [key, chunkId] of Object.entries(tagMap)) {
+    const val = metadata[key];
+    if (val && val.trim()) {
+      tags.push({ id: chunkId, value: val.trim() });
+    }
+  }
+
+  if (tags.length === 0) return null;
+
+  // Calculate total size: 4 bytes for "INFO" + each sub-chunk (4 id + 4 size + string + null + pad)
+  let payloadSize = 4; // "INFO"
+  for (const tag of tags) {
+    const strBytes = encodeUTF8(tag.value);
+    const strLen = strBytes.length + 1; // include null terminator
+    const padded = strLen % 2 === 0 ? strLen : strLen + 1; // RIFF chunks are word-aligned
+    payloadSize += 4 + 4 + padded; // id + size + data
+  }
+
+  // LIST chunk: 4 ("LIST") + 4 (size) + payload
+  const totalSize = 8 + payloadSize;
+  const buf = new ArrayBuffer(totalSize);
+  const view = new DataView(buf);
+  let off = 0;
+
+  // LIST header
+  writeStringBuf(view, off, 'LIST'); off += 4;
+  view.setUint32(off, payloadSize, true); off += 4;
+  writeStringBuf(view, off, 'INFO'); off += 4;
+
+  for (const tag of tags) {
+    const strBytes = encodeUTF8(tag.value);
+    const strLen = strBytes.length + 1;
+    const padded = strLen % 2 === 0 ? strLen : strLen + 1;
+
+    writeStringBuf(view, off, tag.id); off += 4;
+    view.setUint32(off, strLen, true); off += 4;
+    for (let i = 0; i < strBytes.length; i++) {
+      view.setUint8(off + i, strBytes[i]);
+    }
+    view.setUint8(off + strBytes.length, 0); // null terminator
+    off += padded;
+  }
+
+  return buf;
+}
+
+function encodeUTF8(str) {
+  return new TextEncoder().encode(str);
+}
+
+function writeStringBuf(view, offset, string) {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i));
+  }
 }
 
 /**

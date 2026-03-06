@@ -117,6 +117,86 @@
       <span>Ctrl+E: Export</span>
     </div>
 
+    <!-- Batch Processing Panel (Tabbed) -->
+    <div class="batch-panel" id="batchPanel" role="region" aria-label="Batch processing">
+      <div class="batch-header">
+        <div class="batch-tabs" role="tablist" aria-label="Batch panel tabs">
+          <button class="batch-tab active" id="tabQueue" role="tab" aria-selected="true" aria-controls="batchTabQueue">📦 Queue</button>
+          <button class="batch-tab" id="tabMeta" role="tab" aria-selected="false" aria-controls="batchTabMeta">🏷️ Metadata</button>
+        </div>
+        <div class="batch-actions">
+          <button id="batchAddFiles" class="btn-batch" aria-label="Add files to batch queue">+ Add Files</button>
+          <button id="batchClear" class="btn-batch btn-batch-secondary" aria-label="Clear batch queue" disabled>Clear</button>
+          <button id="batchExport" class="btn-batch btn-batch-export" aria-label="Export all files in batch queue" disabled>🚀 Export All</button>
+        </div>
+      </div>
+
+      <!-- Queue Tab -->
+      <div class="batch-tab-content" id="batchTabQueue" role="tabpanel" aria-labelledby="tabQueue">
+        <div class="batch-drop-zone" id="batchDropZone" role="region" aria-label="Drop audio files here for batch processing">
+          <span class="batch-drop-text">Drop multiple audio files here or click "Add Files"</span>
+        </div>
+        <div class="batch-list" id="batchList" role="list" aria-label="Queued files"></div>
+        <div class="batch-progress hidden" id="batchProgress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="batch-progress-info">
+            <span id="batchProgressText">Processing 0/0...</span>
+            <span id="batchProgressPercent">0%</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="batchProgressFill"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Metadata Tab -->
+      <div class="batch-tab-content hidden" id="batchTabMeta" role="tabpanel" aria-labelledby="tabMeta">
+        <div class="meta-layout">
+          <div class="meta-file-list" id="metaFileList" role="listbox" aria-label="Select file to edit metadata"></div>
+          <div class="meta-editor" id="metaEditor">
+            <div class="meta-empty" id="metaEmpty">
+              <span>Add files to the queue or load a file, then select one here to edit its metadata.</span>
+            </div>
+            <div class="meta-form hidden" id="metaForm">
+              <div class="meta-form-title" id="metaFormTitle">filename.wav</div>
+              <div class="meta-field">
+                <label for="metaTitle">Title</label>
+                <input type="text" id="metaTitle" placeholder="Track title" aria-label="Track title">
+              </div>
+              <div class="meta-field">
+                <label for="metaArtist">Artist</label>
+                <input type="text" id="metaArtist" placeholder="Artist name" aria-label="Artist name">
+              </div>
+              <div class="meta-field">
+                <label for="metaAlbum">Album</label>
+                <input type="text" id="metaAlbum" placeholder="Album name" aria-label="Album name">
+              </div>
+              <div class="meta-fields-row">
+                <div class="meta-field">
+                  <label for="metaGenre">Genre</label>
+                  <input type="text" id="metaGenre" placeholder="Genre" aria-label="Genre">
+                </div>
+                <div class="meta-field">
+                  <label for="metaYear">Year</label>
+                  <input type="text" id="metaYear" placeholder="2026" maxlength="4" aria-label="Year">
+                </div>
+                <div class="meta-field">
+                  <label for="metaTrack">Track #</label>
+                  <input type="text" id="metaTrack" placeholder="1" maxlength="4" aria-label="Track number">
+                </div>
+              </div>
+              <div class="meta-field">
+                <label for="metaComment">Comment</label>
+                <input type="text" id="metaComment" placeholder="Optional comment" aria-label="Comment">
+              </div>
+              <div class="meta-apply-row">
+                <button id="metaApplyAll" class="btn-batch" aria-label="Copy this metadata to all files in queue">Apply to All</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Settings Row 1 -->
     <div class="panel-grid" role="group" aria-label="Audio processing settings">
       <div class="settings-card">

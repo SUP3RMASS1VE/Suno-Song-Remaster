@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   selectFile: () => ipcRenderer.invoke('select-file'),
+  selectFiles: () => ipcRenderer.invoke('select-files'),
+  selectDirectory: () => ipcRenderer.invoke('select-directory'),
   saveFile: () => ipcRenderer.invoke('save-file'),
   readAudioFile: (filePath) => ipcRenderer.invoke('read-audio-file', filePath),
   writeFile: (filePath, data) => ipcRenderer.invoke('write-file', filePath, data),

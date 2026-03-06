@@ -1,6 +1,8 @@
 // Type declarations for Electron API
 interface ElectronAPI {
   selectFile: () => Promise<string | null>;
+  selectFiles: () => Promise<string[]>;
+  selectDirectory: () => Promise<string | null>;
   saveFile: () => Promise<string | null>;
   readAudioFile: (filePath: string) => Promise<number[]>;
   writeFile: (filePath: string, data: number[]) => Promise<{ success: boolean }>;

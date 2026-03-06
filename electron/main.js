@@ -58,6 +58,23 @@ ipcMain.handle('select-file', async () => {
   return result.filePaths[0] || null;
 });
 
+// Batch file selection (multiple files)
+ipcMain.handle('select-files', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Audio Files', extensions: ['mp3', 'wav', 'flac', 'aac', 'm4a'] }]
+  });
+  return result.filePaths || [];
+});
+
+// Select output directory for batch export
+ipcMain.handle('select-directory', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory']
+  });
+  return result.filePaths[0] || null;
+});
+
 // Save file dialog
 ipcMain.handle('save-file', async () => {
   const result = await dialog.showSaveDialog(mainWindow, {

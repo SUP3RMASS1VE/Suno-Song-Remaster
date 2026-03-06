@@ -1117,6 +1117,10 @@ async function loadFile(filePath) {
 
     await loadAudioFile(filePath);
     updateChecklist();
+
+    // Auto-add to batch queue so metadata can be edited
+    ensureFileInQueue(filePath);
+    renderBatchList();
   } catch (error) {
     console.error('Error loading file:', error);
     dom.statusMessage.textContent = `✗ Error: ${error.message}`;
@@ -1319,6 +1323,14 @@ async function processAudioOffline(settings) {
 }
 
 // ─── Export ─────────────────────────────────────────────────────────────────
+// Get metadata for the currently loaded file (from batch queue if present)
+function getLoadedFileMetadata() {
+  if (!state.file.path) return null;
+  const queueItem = batchState.queue.find(q => q.path === state.file.path);
+  if (queueItem && queueItem.metadata) return queueItem.metadata;
+  return null;
+}
+
 dom.processBtn.addEventListener('click', async () => {
   if (!state.file.path || !state.file.buffer) return;
 
@@ -1360,7 +1372,8 @@ dom.processBtn.addEventListener('click', async () => {
 
     const wavBuffer = encodeWAV(processedBuffer, {
       bitDepth: settings.bitDepth,
-      dither: settings.bitDepth === 16 // TPDF dithering for 16-bit
+      dither: settings.bitDepth === 16, // TPDF dithering for 16-bit
+      metadata: getLoadedFileMetadata()
     });
     updateProgress(80);
 
@@ -1651,6 +1664,424 @@ App Path: ${info.appPath}
 
   console.log(infoText);
   alert(infoText);
+});
+
+// ─── Batch Processing ───────────────────────────────────────────────────────
+const batchState = {
+  queue: [],       // Array of { path, name, status: 'pending'|'processing'|'done'|'error' }
+  isProcessing: false
+};
+
+const batchDom = {
+  panel: document.getElementById('batchPanel'),
+  addBtn: document.getElementById('batchAddFiles'),
+  clearBtn: document.getElementById('batchClear'),
+  exportBtn: document.getElementById('batchExport'),
+  dropZone: document.getElementById('batchDropZone'),
+  list: document.getElementById('batchList'),
+  progress: document.getElementById('batchProgress'),
+  progressText: document.getElementById('batchProgressText'),
+  progressPercent: document.getElementById('batchProgressPercent'),
+  progressFill: document.getElementById('batchProgressFill'),
+  // Tabs
+  tabQueue: document.getElementById('tabQueue'),
+  tabMeta: document.getElementById('tabMeta'),
+  tabContentQueue: document.getElementById('batchTabQueue'),
+  tabContentMeta: document.getElementById('batchTabMeta'),
+  // Metadata
+  metaFileList: document.getElementById('metaFileList'),
+  metaEditor: document.getElementById('metaEditor'),
+  metaEmpty: document.getElementById('metaEmpty'),
+  metaForm: document.getElementById('metaForm'),
+  metaFormTitle: document.getElementById('metaFormTitle'),
+  metaTitle: document.getElementById('metaTitle'),
+  metaArtist: document.getElementById('metaArtist'),
+  metaAlbum: document.getElementById('metaAlbum'),
+  metaGenre: document.getElementById('metaGenre'),
+  metaYear: document.getElementById('metaYear'),
+  metaTrack: document.getElementById('metaTrack'),
+  metaComment: document.getElementById('metaComment'),
+  metaApplyAll: document.getElementById('metaApplyAll')
+};
+
+// ─── Batch Tabs ─────────────────────────────────────────────────────────────
+batchDom.tabQueue.addEventListener('click', () => {
+  batchDom.tabQueue.classList.add('active');
+  batchDom.tabMeta.classList.remove('active');
+  batchDom.tabQueue.setAttribute('aria-selected', 'true');
+  batchDom.tabMeta.setAttribute('aria-selected', 'false');
+  batchDom.tabContentQueue.classList.remove('hidden');
+  batchDom.tabContentMeta.classList.add('hidden');
+});
+
+batchDom.tabMeta.addEventListener('click', () => {
+  batchDom.tabMeta.classList.add('active');
+  batchDom.tabQueue.classList.remove('active');
+  batchDom.tabMeta.setAttribute('aria-selected', 'true');
+  batchDom.tabQueue.setAttribute('aria-selected', 'false');
+  batchDom.tabContentMeta.classList.remove('hidden');
+  batchDom.tabContentQueue.classList.add('hidden');
+  renderMetaFileList();
+});
+
+// ─── Metadata Editor ────────────────────────────────────────────────────────
+let metaSelectedIndex = -1;
+
+function getItemMeta(item) {
+  if (!item.metadata) {
+    item.metadata = { title: '', artist: '', album: '', genre: '', year: '', track: '', comment: '' };
+  }
+  return item.metadata;
+}
+
+function hasAnyMeta(item) {
+  if (!item.metadata) return false;
+  return Object.values(item.metadata).some(v => v && v.trim());
+}
+
+function renderMetaFileList() {
+  batchDom.metaFileList.innerHTML = '';
+
+  if (batchState.queue.length === 0) {
+    batchDom.metaEmpty.classList.remove('hidden');
+    batchDom.metaForm.classList.add('hidden');
+    return;
+  }
+
+  batchState.queue.forEach((item, index) => {
+    const el = document.createElement('div');
+    el.className = 'meta-file-item' + (index === metaSelectedIndex ? ' selected' : '') + (hasAnyMeta(item) ? ' has-meta' : '');
+    el.setAttribute('role', 'option');
+    el.setAttribute('aria-selected', index === metaSelectedIndex ? 'true' : 'false');
+    el.innerHTML = `<span class="meta-dot"></span>${item.name}`;
+    el.addEventListener('click', () => selectMetaFile(index));
+    batchDom.metaFileList.appendChild(el);
+  });
+
+  if (metaSelectedIndex >= 0 && metaSelectedIndex < batchState.queue.length) {
+    loadMetaForm(metaSelectedIndex);
+  } else {
+    batchDom.metaEmpty.classList.remove('hidden');
+    batchDom.metaForm.classList.add('hidden');
+  }
+}
+
+function selectMetaFile(index) {
+  // Save current before switching
+  if (metaSelectedIndex >= 0 && metaSelectedIndex < batchState.queue.length) {
+    saveMetaForm(metaSelectedIndex);
+  }
+  metaSelectedIndex = index;
+  renderMetaFileList();
+}
+
+function loadMetaForm(index) {
+  const item = batchState.queue[index];
+  const meta = getItemMeta(item);
+
+  batchDom.metaEmpty.classList.add('hidden');
+  batchDom.metaForm.classList.remove('hidden');
+  batchDom.metaFormTitle.textContent = item.name;
+
+  batchDom.metaTitle.value = meta.title || '';
+  batchDom.metaArtist.value = meta.artist || '';
+  batchDom.metaAlbum.value = meta.album || '';
+  batchDom.metaGenre.value = meta.genre || '';
+  batchDom.metaYear.value = meta.year || '';
+  batchDom.metaTrack.value = meta.track || '';
+  batchDom.metaComment.value = meta.comment || '';
+}
+
+function saveMetaForm(index) {
+  const item = batchState.queue[index];
+  if (!item) return;
+  const meta = getItemMeta(item);
+  meta.title = batchDom.metaTitle.value;
+  meta.artist = batchDom.metaArtist.value;
+  meta.album = batchDom.metaAlbum.value;
+  meta.genre = batchDom.metaGenre.value;
+  meta.year = batchDom.metaYear.value;
+  meta.track = batchDom.metaTrack.value;
+  meta.comment = batchDom.metaComment.value;
+}
+
+// Auto-save on input
+[batchDom.metaTitle, batchDom.metaArtist, batchDom.metaAlbum, batchDom.metaGenre,
+ batchDom.metaYear, batchDom.metaTrack, batchDom.metaComment].forEach(input => {
+  input.addEventListener('input', () => {
+    if (metaSelectedIndex >= 0) saveMetaForm(metaSelectedIndex);
+  });
+});
+
+// Apply to All button
+batchDom.metaApplyAll.addEventListener('click', () => {
+  if (metaSelectedIndex < 0) return;
+  saveMetaForm(metaSelectedIndex);
+  const source = batchState.queue[metaSelectedIndex].metadata;
+  batchState.queue.forEach((item, i) => {
+    if (i === metaSelectedIndex) return;
+    item.metadata = { ...source };
+  });
+  renderMetaFileList();
+});
+
+function updateBatchButtons() {
+  const hasItems = batchState.queue.length > 0;
+  batchDom.clearBtn.disabled = !hasItems || batchState.isProcessing;
+  batchDom.exportBtn.disabled = !hasItems || batchState.isProcessing;
+  batchDom.addBtn.disabled = batchState.isProcessing;
+}
+
+function ensureFileInQueue(filePath) {
+  const alreadyQueued = batchState.queue.some(q => q.path === filePath);
+  if (!alreadyQueued) {
+    const name = filePath.split(/[\\/]/).pop();
+    batchState.queue.push({ path: filePath, name, status: 'pending' });
+    updateBatchButtons();
+  }
+}
+
+function renderBatchList() {
+  batchDom.list.innerHTML = '';
+  batchState.queue.forEach((item, index) => {
+    const el = document.createElement('div');
+    const isLoaded = state.file.path === item.path;
+    el.className = 'batch-item' + (isLoaded ? ' batch-item-loaded' : '');
+    el.setAttribute('role', 'listitem');
+
+    const statusIcon = item.status === 'done' ? '✓' :
+                       item.status === 'error' ? '✗' :
+                       item.status === 'processing' ? '⏳' : '🎵';
+    const statusText = item.status === 'done' ? 'Done' :
+                       item.status === 'error' ? 'Error' :
+                       item.status === 'processing' ? 'Processing...' : 'Pending';
+    const statusClass = item.status === 'pending' ? '' : item.status;
+
+    el.innerHTML = `
+      <span class="batch-item-icon">${statusIcon}</span>
+      <span class="batch-item-name" title="${item.name}">${item.name}</span>
+      ${isLoaded ? '<span class="batch-item-playing">♦ Loaded</span>' : ''}
+      ${!batchState.isProcessing ? `<button class="batch-item-preview" data-index="${index}" aria-label="Preview ${item.name} in player" title="Load into player">▶</button>` : ''}
+      <span class="batch-item-status ${statusClass}">${statusText}</span>
+      ${!batchState.isProcessing ? `<button class="batch-item-remove" data-index="${index}" aria-label="Remove ${item.name} from queue">✕</button>` : ''}
+    `;
+    batchDom.list.appendChild(el);
+  });
+
+  // Attach preview handlers
+  batchDom.list.querySelectorAll('.batch-item-preview').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const idx = parseInt(btn.dataset.index);
+      const item = batchState.queue[idx];
+      if (item) {
+        stopAudio();
+        state.playback.pauseTime = 0;
+        await loadFile(item.path);
+        renderBatchList();
+      }
+    });
+  });
+
+  // Attach remove handlers
+  batchDom.list.querySelectorAll('.batch-item-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.index);
+      batchState.queue.splice(idx, 1);
+      if (metaSelectedIndex >= batchState.queue.length) metaSelectedIndex = -1;
+      renderBatchList();
+      updateBatchButtons();
+    });
+  });
+}
+
+function addFilesToBatch(filePaths) {
+  const existing = new Set(batchState.queue.map(q => q.path));
+  for (const fp of filePaths) {
+    if (existing.has(fp)) continue;
+    const name = fp.split(/[\\/]/).pop();
+    batchState.queue.push({ path: fp, name, status: 'pending' });
+  }
+  renderBatchList();
+  updateBatchButtons();
+}
+
+batchDom.addBtn.addEventListener('click', async () => {
+  const files = await window.electronAPI.selectFiles();
+  if (files.length) addFilesToBatch(files);
+});
+
+batchDom.clearBtn.addEventListener('click', () => {
+  batchState.queue = [];
+  metaSelectedIndex = -1;
+  renderBatchList();
+  updateBatchButtons();
+  renderMetaFileList();
+});
+
+batchDom.dropZone.addEventListener('click', async () => {
+  const files = await window.electronAPI.selectFiles();
+  if (files.length) addFilesToBatch(files);
+});
+
+batchDom.dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  batchDom.dropZone.classList.add('drag-over');
+});
+
+batchDom.dropZone.addEventListener('dragleave', () => {
+  batchDom.dropZone.classList.remove('drag-over');
+});
+
+batchDom.dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  batchDom.dropZone.classList.remove('drag-over');
+  const files = [...e.dataTransfer.files].filter(f => /\.(mp3|wav|flac|aac|m4a)$/i.test(f.name));
+  const paths = files.map(f => window.electronAPI.getPathForFile(f)).filter(Boolean);
+  if (paths.length) addFilesToBatch(paths);
+});
+
+// Helper: yield to the event loop so the UI can repaint
+function yieldToUI() {
+  return new Promise(resolve => setTimeout(resolve, 0));
+}
+
+// Write WAV data in chunks to avoid blocking the main thread on large files
+async function writeFileChunked(outputPath, wavBuffer) {
+  const CHUNK = 2 * 1024 * 1024; // 2 MB per chunk
+  const full = new Uint8Array(wavBuffer);
+  if (full.length <= CHUNK) {
+    await window.electronAPI.writeFile(outputPath, Array.from(full));
+    return;
+  }
+  // For large files, still send as one call but yield before/after to keep UI alive
+  await yieldToUI();
+  await window.electronAPI.writeFile(outputPath, Array.from(full));
+  await yieldToUI();
+}
+
+batchDom.exportBtn.addEventListener('click', async () => {
+  if (batchState.queue.length === 0 || batchState.isProcessing) return;
+
+  const outputDir = await window.electronAPI.selectDirectory();
+  if (!outputDir) return;
+
+  batchState.isProcessing = true;
+  updateBatchButtons();
+  batchDom.progress.classList.remove('hidden');
+
+  const settings = validateSettings({
+    normalizeLoudness: dom.normalizeLoudness.checked,
+    truePeakLimit: dom.truePeakLimit.checked,
+    truePeakCeiling: parseFloat(dom.truePeakSlider.value),
+    targetLufs: dom.targetLufs ? parseInt(dom.targetLufs.value) : -14,
+    inputGain: dom.inputGain ? parseFloat(dom.inputGain.value) : 0,
+    stereoWidth: dom.stereoWidth ? parseInt(dom.stereoWidth.value) : 100,
+    cleanLowEnd: dom.cleanLowEnd.checked,
+    glueCompression: dom.glueCompression.checked,
+    centerBass: dom.centerBass.checked,
+    cutMud: dom.cutMud.checked,
+    addAir: dom.addAir.checked,
+    tameHarsh: dom.tameHarsh.checked,
+    sampleRate: parseInt(dom.sampleRate.value),
+    bitDepth: parseInt(dom.bitDepth.value),
+    eqLow: parseFloat(dom.eqLow.value),
+    eqLowMid: parseFloat(dom.eqLowMid.value),
+    eqMid: parseFloat(dom.eqMid.value),
+    eqHighMid: parseFloat(dom.eqHighMid.value),
+    eqHigh: parseFloat(dom.eqHigh.value)
+  });
+
+  const total = batchState.queue.length;
+  let completed = 0;
+  let errors = 0;
+
+  // Save original player state once
+  const origBuffer = state.file.buffer;
+  const origLufs = state.file.lufs;
+  const origNormGain = state.file.normGain;
+
+  for (let i = 0; i < total; i++) {
+    const item = batchState.queue[i];
+    item.status = 'processing';
+    renderBatchList();
+    batchDom.progressText.textContent = `Processing ${i + 1}/${total}: ${item.name}`;
+
+    // Yield so the UI updates before heavy work
+    await yieldToUI();
+
+    try {
+      // Decode audio
+      const ctx = new AudioContext();
+      const arrayData = await window.electronAPI.readAudioFile(item.path);
+      await yieldToUI();
+
+      const uint8Array = new Uint8Array(arrayData);
+      const audioBuffer = await ctx.decodeAudioData(uint8Array.buffer);
+      await ctx.close();
+      await yieldToUI();
+
+      // Measure LUFS
+      const lufsResult = measureLUFS(audioBuffer);
+      const targetLufs = settings.targetLufs || AUDIO_CONSTANTS.TARGET_LUFS;
+      await yieldToUI();
+
+      // Temporarily swap state for processAudioOffline
+      state.file.buffer = audioBuffer;
+      state.file.lufs = lufsResult.integratedLUFS;
+      state.file.normGain = calculateNormalizationGain(lufsResult.integratedLUFS, targetLufs);
+
+      const processedBuffer = await processAudioOffline(settings);
+      await yieldToUI();
+
+      const wavBuffer = encodeWAV(processedBuffer, {
+        bitDepth: settings.bitDepth,
+        dither: settings.bitDepth === 16,
+        metadata: item.metadata || null
+      });
+
+      // Build output path
+      const baseName = item.name.replace(/\.[^.]+$/, '');
+      const sep = (outputDir.endsWith('/') || outputDir.endsWith('\\')) ? '' : '\\';
+      const outputPath = outputDir + sep + baseName + '_mastered.wav';
+
+      await writeFileChunked(outputPath, wavBuffer);
+
+      item.status = 'done';
+      completed++;
+    } catch (err) {
+      console.error(`Batch error for ${item.name}:`, err);
+      item.status = 'error';
+      errors++;
+    }
+
+    const percent = Math.round(((i + 1) / total) * 100);
+    batchDom.progressFill.style.width = `${percent}%`;
+    batchDom.progressPercent.textContent = `${percent}%`;
+    renderBatchList();
+
+    // Yield between files
+    await yieldToUI();
+  }
+
+  // Restore original player state
+  state.file.buffer = origBuffer;
+  state.file.lufs = origLufs;
+  state.file.normGain = origNormGain;
+
+  batchState.isProcessing = false;
+  updateBatchButtons();
+
+  batchDom.progressText.textContent = `Done! ${completed} exported${errors ? `, ${errors} failed` : ''}`;
+
+  dom.statusMessage.textContent = `✓ Batch complete: ${completed}/${total} files exported.`;
+  dom.statusMessage.className = 'status-message success visible';
+  setTimeout(() => dom.statusMessage.classList.remove('visible'), 5000);
+
+  setTimeout(() => {
+    batchDom.progress.classList.add('hidden');
+    batchDom.progressFill.style.width = '0%';
+    batchDom.progressPercent.textContent = '0%';
+  }, 3000);
 });
 
 // ─── Initialization ─────────────────────────────────────────────────────────
