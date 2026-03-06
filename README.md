@@ -1,7 +1,7 @@
 # AI Music Remastering
 
 A professional desktop app for mastering AI-generated music to streaming-ready quality.
-<img width="1046" height="655" alt="Screenshot 2026-01-20 191847" src="https://github.com/user-attachments/assets/1c91071e-b269-42fc-acbc-e590e7d31e58" />
+<img width="1372" height="1092" alt="Screenshot 2026-03-06 184721" src="https://github.com/user-attachments/assets/433ed7d2-fa81-4c88-9370-30c8b466814c" />
 
 ## Features
 
@@ -101,5 +101,6 @@ v1.2.2
 ## License
 
 ISC
+
 
 
