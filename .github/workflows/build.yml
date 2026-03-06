@@ -96,5 +96,21 @@ jobs:
             artifacts/linux-build/*
           draft: false
           prerelease: false
+          generate_release_notes: false
+          body: |
+            ## What's New in ${{ github.ref_name }}
+
+            ### Bug Fixes
+            - Fixed metadata tab file list being too narrow to read filenames with many songs queued
+            - Widened file list panel, increased font size, and expanded scroll area for better readability
+
+            ### v2.0.0 Features
+            - **Batch Processing** — Queue multiple files, apply the same mastering settings, and export all at once
+            - **Metadata Editor** — Per-file tags (title, artist, album, genre, year, track #, comment) embedded into WAV
+            - **Queue Preview** — Load any queued file into the player to audition before exporting
+            - **Apply to All** — Copy metadata across the entire queue in one click
+            - Non-blocking batch export with per-file progress indicators
+
+            See the full [changelog](https://github.com/${{ github.repository }}/blob/main/README.md#changelog) for details.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
