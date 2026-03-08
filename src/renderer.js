@@ -278,6 +278,10 @@ const dom = {
   showTipsCheckbox: document.getElementById('showTips'),
   debugBtn: document.getElementById('debugBtn'),
 
+  // Theme
+  themeToggle: document.getElementById('themeToggle'),
+  themeIcon: document.getElementById('themeIcon'),
+
   // Spectrogram
   spectrogramCanvas: document.getElementById('spectrogramCanvas')
 };
@@ -286,6 +290,34 @@ const dom = {
 dom.minimizeBtn.addEventListener('click', () => window.electronAPI.minimizeWindow());
 dom.maximizeBtn.addEventListener('click', () => window.electronAPI.maximizeWindow());
 dom.closeBtn.addEventListener('click', () => window.electronAPI.closeWindow());
+
+// ─── Theme Toggle ───────────────────────────────────────────────────────────
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  dom.themeIcon.textContent = theme === 'light' ? '🌙' : '☀️';
+  localStorage.setItem('ai-mastering-theme', theme);
+}
+
+dom.themeToggle.addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme');
+  applyTheme(current === 'light' ? 'dark' : 'light');
+  restartSpectrogramIfPlaying();
+});
+
+// Load saved theme
+const savedTheme = localStorage.getItem('ai-mastering-theme') || 'dark';
+applyTheme(savedTheme);
+
+// Restart spectrogram on theme change so it picks up new bg color
+function restartSpectrogramIfPlaying() {
+  if (state.playback.isPlaying && state.audio.analyser && dom.spectrogramCanvas) {
+    if (state.meters.spectrogramAnim) {
+      cancelAnimationFrame(state.meters.spectrogramAnim);
+      state.meters.spectrogramAnim = null;
+    }
+    startSpectrogram();
+  }
+}
 
 // ─── Audio Context ──────────────────────────────────────────────────────────
 function initAudioContext() {
@@ -979,9 +1011,10 @@ function stopLevelMeters() {
 
   // Clear spectrogram
   if (dom.spectrogramCanvas) {
-    const ctx = dom.spectrogramCanvas.getContext('2d');
-    ctx.fillStyle = '#0a0a1a';
-    ctx.fillRect(0, 0, dom.spectrogramCanvas.width, dom.spectrogramCanvas.height);
+    const sCtx = dom.spectrogramCanvas.getContext('2d');
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    sCtx.fillStyle = isLight ? '#e8e8f0' : '#0a0a1a';
+    sCtx.fillRect(0, 0, dom.spectrogramCanvas.width, dom.spectrogramCanvas.height);
   }
 }
 
@@ -998,11 +1031,10 @@ function startSpectrogram() {
   const canvas = dom.spectrogramCanvas;
   const ctx = canvas.getContext('2d');
 
-  // Set canvas size once
+  // Set canvas size to CSS pixel dimensions (no DPR scaling for spectrogram)
   const rect = canvas.getBoundingClientRect();
-  canvas.width = rect.width * window.devicePixelRatio;
-  canvas.height = rect.height * window.devicePixelRatio;
-  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+  canvas.width = rect.width;
+  canvas.height = rect.height;
 
   const width = rect.width;
   const height = rect.height;
@@ -1011,17 +1043,18 @@ function startSpectrogram() {
   const bufferLength = analyser.frequencyBinCount;
   const dataArray = new Uint8Array(bufferLength);
 
-  // Create offscreen canvas once (outside draw loop)
+  // Create offscreen canvas
   const offscreen = document.createElement('canvas');
-  offscreen.width = canvas.width;
-  offscreen.height = canvas.height;
+  offscreen.width = width;
+  offscreen.height = height;
   const offCtx = offscreen.getContext('2d');
-  offCtx.scale(window.devicePixelRatio, window.devicePixelRatio);
 
   // Clear both canvases
-  ctx.fillStyle = '#0a0a1a';
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  const specBg = isLight ? '#e8e8f0' : '#0a0a1a';
+  ctx.fillStyle = specBg;
   ctx.fillRect(0, 0, width, height);
-  offCtx.fillStyle = '#0a0a1a';
+  offCtx.fillStyle = specBg;
   offCtx.fillRect(0, 0, width, height);
 
   // Throttle to ~30fps for performance
@@ -1081,7 +1114,7 @@ function startSpectrogram() {
     }
 
     // Copy to main canvas
-    ctx.drawImage(offscreen, 0, 0, width, height, 0, 0, width, height);
+    ctx.drawImage(offscreen, 0, 0);
   }
 
   state.meters.spectrogramAnim = requestAnimationFrame(draw);

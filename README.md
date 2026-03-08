@@ -70,6 +70,15 @@ npm run electron:build:mac    # macOSnpm run electron:build:linux  # Linux
 
 ## Changelog
 
+### v2.0.2
+
+**New Features**
+- Light/dark mode toggle — click the sun/moon button in the top bar to switch themes
+- Theme preference is saved to localStorage and persists across restarts
+
+**Bug Fixes**
+- Fixed spectrogram rendering issue caused by devicePixelRatio canvas scaling mismatch
+
 ### v2.0.1
 
 **Bug Fixes**
