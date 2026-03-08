@@ -108,16 +108,12 @@ jobs:
           body: |
             ## What's New in ${{ github.ref_name != '' && startsWith(github.ref, 'refs/tags/') && github.ref_name || steps.pkg.outputs.version }}
 
-            ### Bug Fixes
-            - Fixed metadata tab file list being too narrow to read filenames with many songs queued
-            - Widened file list panel, increased font size, and expanded scroll area for better readability
+            ### New Features
+            - **Light/Dark Mode** — Toggle between light and dark themes via the sun/moon button in the top bar
+            - Theme preference persists across restarts via localStorage
 
-            ### v2.0.0 Features
-            - **Batch Processing** — Queue multiple files, apply the same mastering settings, and export all at once
-            - **Metadata Editor** — Per-file tags (title, artist, album, genre, year, track #, comment) embedded into WAV
-            - **Queue Preview** — Load any queued file into the player to audition before exporting
-            - **Apply to All** — Copy metadata across the entire queue in one click
-            - Non-blocking batch export with per-file progress indicators
+            ### Bug Fixes
+            - Fixed spectrogram rendering issue caused by devicePixelRatio canvas scaling mismatch
 
             See the full [changelog](https://github.com/${{ github.repository }}/blob/main/README.md#changelog) for details.
         env:
