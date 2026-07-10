@@ -8,7 +8,8 @@ A professional desktop app for mastering AI-generated music to streaming-ready q
 - **Batch Processing** - Queue multiple files, apply the same settings, and export all at once
 - **Metadata Editor** - Add title, artist, album, genre, year, track number, and comments per file
 - **Loudness Normalization** - Adjustable target LUFS (-20 to -6 LUFS)
-- **True Peak Limiting** - Prevents clipping with adjustable ceiling
+- **True Peak Limiting** - ITU-R BS.1770 4x-oversampled inter-sample peak limiting with adjustable ceiling (real dBTP, not just sample peak)
+- **Center Bass** - Collapse low frequencies (below 120 Hz) to mono for a tighter, phase-safe low end
 - **Input Gain Control** - Adjust input level before processing (-12 to +12 dB)
 - **Stereo Width** - Control stereo image (0% mono to 200% extra wide)
 - **5-Band EQ** - Fine-tune with visual faders and presets (Flat, Vocal Boost, Bass Boost, Bright, Warm, AI Fix)
@@ -88,10 +89,22 @@ npm run electron:build:mac    # macOSnpm run electron:build:linux  # Linux
 - Pure JavaScript audio processing (no FFmpeg)
 - Web Audio API for real-time preview
 - ITU-R BS.1770-4 compliant LUFS measurement
+- ITU-R BS.1770 4x-oversampled true-peak (dBTP) limiting
 - Native JavaScript WAV encoder
 
 
 ## Changelog
+
+### v2.2.0
+
+**Bug Fixes**
+- Fixed loudness normalization running *after* the limiter, which could push peaks back above the true-peak ceiling. Both preview and export now normalize first and limit last, so make-up gain can never exceed the ceiling
+- Fixed the "Center Bass" toggle, which was wired to the UI but never applied to the audio. It now high-passes the stereo side signal at 120 Hz to mono the low end
+
+**Audio Quality**
+- Genuine true-peak (dBTP) limiting: the export now upsamples 4x (ITU-R BS.1770), clips inter-sample overshoots in the oversampled domain, and resamples back — so exported files are true-peak compliant, not just sample-peak. Audio that's already compliant is left untouched
+- Real-time preview uses a 4x-oversampled brickwall clip after the limiter so what you hear matches the exported file
+- Loudness readout now reports measured true peak in dBTP
 
 ### v2.1.0
 

@@ -104,18 +104,14 @@ jobs:
           body: |
             ## What's New in ${{ github.ref_name != '' && startsWith(github.ref, 'refs/tags/') && github.ref_name || steps.pkg.outputs.version }}
 
-            ### New Features
-            - **Audio Editor (mini DAW)** — New "✂️ Editor" tab with an interactive waveform
-            - Click-drag to select a region, single-click to move the playhead
-            - Fade In / Fade Out with adjustable duration (equal-power curve)
-            - Trim to Selection, Delete Selection, and Silence
-            - Normalize (peak to -0.3 dBFS) and Reverse (selection or whole track)
-            - Play / Pause / Stop transport with selection looping
-            - Per-session Undo Edit (up to 30 steps) and Reset to Original
-            - Edits flow straight into the mastering chain and export
+            ### Audio Quality
+            - **Genuine true-peak (dBTP) limiting** — export now upsamples 4x (ITU-R BS.1770), clips inter-sample overshoots in the oversampled domain, and resamples back, so exported files are true-peak compliant instead of just sample-peak. Already-compliant audio is left untouched
+            - Real-time preview uses a matching 4x-oversampled brickwall clip after the limiter, so what you hear matches the exported file
+            - Loudness readout now reports measured true peak in dBTP
 
             ### Bug Fixes
-            - Fixed batch "Export All" using a hardcoded Windows path separator, which produced mangled output paths on macOS and Linux
+            - Fixed loudness normalization running *after* the limiter, which could push peaks back above the true-peak ceiling. Both preview and export now normalize first and limit last, so make-up gain can never exceed the ceiling
+            - Fixed the "Center Bass" toggle, which was wired to the UI but never applied to the audio. It now high-passes the stereo side signal at 120 Hz to mono the low end
 
             See the full [changelog](https://github.com/${{ github.repository }}/blob/main/README.md#changelog) for details.
         env:

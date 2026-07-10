@@ -25,6 +25,7 @@ export const AUDIO_CONSTANTS = {
   // Filter frequencies
   HIGHPASS_FREQ: 30,
   MUD_CUT_FREQ: 250,
+  BASS_MONO_FREQ: 120, // collapse stereo side content below this to mono ("Center Bass")
   HARSHNESS_FREQ_1: 4000,
   HARSHNESS_FREQ_2: 6000,
   AIR_FREQ: 12000,

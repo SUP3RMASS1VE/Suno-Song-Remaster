@@ -1,6 +1,7 @@
 import { AUDIO_CONSTANTS, validateSettings } from './audioConstants.js';
 import { measureLUFS, calculateNormalizationGain } from './lufs.js';
 import { encodeWAV } from './wavEncoder.js';
+import { readAudioMetadata } from './metadataReader.js';
 
 // ─── Settings Persistence ───────────────────────────────────────────────────
 const STORAGE_KEY = 'ai-mastering-settings';
@@ -395,6 +396,12 @@ function configureFilterNodes(nodes, settings = null) {
   nodes.limiter.ratio.value = AUDIO_CONSTANTS.LIMITER_RATIO;
   nodes.limiter.attack.value = AUDIO_CONSTANTS.LIMITER_ATTACK;
   nodes.limiter.release.value = AUDIO_CONSTANTS.LIMITER_RELEASE;
+
+  // "Center Bass": high-pass the side (stereo difference) signal so low
+  // frequencies collapse to mono. Freq of 1 Hz is effectively transparent.
+  nodes.sideHighpass.type = 'highpass';
+  nodes.sideHighpass.frequency.value = s.centerBass ? AUDIO_CONSTANTS.BASS_MONO_FREQ : 1;
+  nodes.sideHighpass.Q.value = 0.7;
 }
 
 /**
@@ -413,6 +420,8 @@ function createProcessingNodes(ctx) {
   nodes.midPeak2 = ctx.createBiquadFilter();
   nodes.compressor = ctx.createDynamicsCompressor();
   nodes.limiter = ctx.createDynamicsCompressor();
+  nodes.ceilingClip = ctx.createWaveShaper(); // brickwall clamp after the limiter
+  nodes.ceilingClip.oversample = '4x';
 
   // Stereo width processing (mid-side)
   nodes.stereoSplitter = ctx.createChannelSplitter(2);
@@ -427,6 +436,7 @@ function createProcessingNodes(ctx) {
   nodes.midToRight = ctx.createGain();
   nodes.sideToLeft = ctx.createGain();
   nodes.sideToRight = ctx.createGain();
+  nodes.sideHighpass = ctx.createBiquadFilter(); // "Center Bass": mono the low end
 
   // 5-band EQ
   nodes.eqLow = ctx.createBiquadFilter();
@@ -504,15 +514,26 @@ function updateAudioChain() {
     const ceiling = parseFloat(dom.truePeakSlider.value);
     nodes.limiter.threshold.value = ceiling;
     nodes.limiter.ratio.value = AUDIO_CONSTANTS.LIMITER_RATIO;
+    if (nodes.ceilingClip) {
+      nodes.ceilingClip.curve = makeClipCurve(Math.pow(10, ceiling / 20));
+    }
   } else {
     nodes.limiter.threshold.value = 0;
     nodes.limiter.ratio.value = 1;
+    if (nodes.ceilingClip) nodes.ceilingClip.curve = null; // passthrough
   }
 
   if (nodes.midGain && nodes.sideGain && dom.stereoWidth) {
     const width = bypassed ? 100 : parseInt(dom.stereoWidth.value);
     const sideLevel = width / 100;
     nodes.sideGain.gain.value = sideLevel;
+  }
+
+  if (nodes.sideHighpass && dom.centerBass) {
+    nodes.sideHighpass.type = 'highpass';
+    nodes.sideHighpass.frequency.value = (dom.centerBass.checked && !bypassed)
+      ? AUDIO_CONSTANTS.BASS_MONO_FREQ : 1;
+    nodes.sideHighpass.Q.value = 0.7;
   }
 
   if (nodes.normGain) {
@@ -539,11 +560,10 @@ function connectAudioChain(source) {
     .connect(nodes.midPeak)
     .connect(nodes.midPeak2)
     .connect(nodes.highshelf)
-    .connect(nodes.compressor)
-    .connect(nodes.limiter);
+    .connect(nodes.compressor);
 
-  // Mid-side stereo width
-  nodes.limiter.connect(nodes.stereoSplitter);
+  // Mid-side stereo width (runs before normalization + the final limiter)
+  nodes.compressor.connect(nodes.stereoSplitter);
 
   nodes.stereoSplitter.connect(nodes.leftToMid, 0);
   nodes.stereoSplitter.connect(nodes.rightToMid, 1);
@@ -569,16 +589,22 @@ function connectAudioChain(source) {
 
   nodes.midGain.connect(nodes.midToLeft);
   nodes.midGain.connect(nodes.midToRight);
-  nodes.sideGain.connect(nodes.sideToLeft);
-  nodes.sideGain.connect(nodes.sideToRight);
+  // Side passes through the "Center Bass" high-pass before distribution
+  nodes.sideGain.connect(nodes.sideHighpass);
+  nodes.sideHighpass.connect(nodes.sideToLeft);
+  nodes.sideHighpass.connect(nodes.sideToRight);
 
   nodes.midToLeft.connect(nodes.stereoMerger, 0, 0);
   nodes.sideToLeft.connect(nodes.stereoMerger, 0, 0);
   nodes.midToRight.connect(nodes.stereoMerger, 0, 1);
   nodes.sideToRight.connect(nodes.stereoMerger, 0, 1);
 
+  // Normalize first, then limit + brickwall clip last so make-up gain can't
+  // exceed the ceiling
   nodes.stereoMerger
     .connect(nodes.normGain)
+    .connect(nodes.limiter)
+    .connect(nodes.ceilingClip)
     .connect(state.audio.analyser)
     .connect(nodes.gain);
 
@@ -690,6 +716,8 @@ async function loadAudioFile(filePath) {
   try {
     const arrayData = await window.electronAPI.readAudioFile(filePath);
     const uint8Array = new Uint8Array(arrayData);
+    // Read any embedded tags so the metadata editor can pre-populate
+    state.file.parsedMetadata = readAudioMetadata(uint8Array);
     state.file.buffer = await ctx.decodeAudioData(uint8Array.buffer);
 
     dom.fileMeta.textContent = 'Analyzing loudness...';
@@ -706,7 +734,15 @@ async function loadAudioFile(filePath) {
     const sampleRate = state.file.buffer.sampleRate;
     const channels = state.file.buffer.numberOfChannels;
     const lufsDisplay = isFinite(state.file.lufs) ? `${state.file.lufs.toFixed(1)} LUFS` : 'N/A';
-    dom.fileMeta.textContent = `${Math.round(sampleRate / 1000)}kHz • ${channels}ch • ${formatTime(state.file.duration)} • ${lufsDisplay}`;
+    const baseMeta = `${Math.round(sampleRate / 1000)}kHz • ${channels}ch • ${formatTime(state.file.duration)} • ${lufsDisplay}`;
+    dom.fileMeta.textContent = baseMeta;
+
+    // True-peak (dBTP) measurement is async (oversampled); append when ready.
+    measureTruePeakDb(state.file.buffer).then((tp) => {
+      if (state.file.buffer && isFinite(tp)) {
+        dom.fileMeta.textContent = `${baseMeta} • ${tp.toFixed(1)} dBTP`;
+      }
+    }).catch(() => { /* leave base meta if measurement fails */ });
 
     drawWaveform();
 
@@ -1261,7 +1297,7 @@ async function processAudioOffline(settings) {
   // Configure filters using shared function
   configureFilterNodes(nodes, settings);
 
-  // Override compressor/limiter based on settings
+  // Glue compressor config
   if (settings.glueCompression) {
     nodes.compressor.threshold.value = AUDIO_CONSTANTS.GLUE_THRESHOLD;
     nodes.compressor.knee.value = 10;
@@ -1273,24 +1309,17 @@ async function processAudioOffline(settings) {
     nodes.compressor.ratio.value = 1;
   }
 
-  if (settings.truePeakLimit) {
-    nodes.limiter.threshold.value = settings.truePeakCeiling;
-    nodes.limiter.knee.value = 0;
-    nodes.limiter.ratio.value = AUDIO_CONSTANTS.LIMITER_RATIO;
-    nodes.limiter.attack.value = AUDIO_CONSTANTS.LIMITER_ATTACK;
-    nodes.limiter.release.value = AUDIO_CONSTANTS.LIMITER_RELEASE;
-  } else {
-    nodes.limiter.threshold.value = 0;
-    nodes.limiter.ratio.value = 1;
-  }
-
+  // Pass 1 renders tonal shaping + dynamics + stereo width WITHOUT the limiter
+  // and WITHOUT normalization gain. Normalization is measured and applied
+  // afterwards, then the limiter runs as a final pass — so make-up gain can
+  // never push peaks past the true-peak ceiling.
   nodes.normGain.gain.value = 1.0;
 
   // Configure stereo width via mid-side nodes
   const stereoWidth = settings.stereoWidth !== undefined ? settings.stereoWidth : 100;
   const sideLevel = stereoWidth / 100;
 
-  // Connect the chain including mid-side processing
+  // Connect the chain including mid-side processing (no limiter here)
   source
     .connect(nodes.inputGain)
     .connect(nodes.highpass)
@@ -1303,11 +1332,10 @@ async function processAudioOffline(settings) {
     .connect(nodes.midPeak)
     .connect(nodes.midPeak2)
     .connect(nodes.highshelf)
-    .connect(nodes.compressor)
-    .connect(nodes.limiter);
+    .connect(nodes.compressor);
 
   // Mid-side stereo width processing (same as preview chain)
-  nodes.limiter.connect(nodes.stereoSplitter);
+  nodes.compressor.connect(nodes.stereoSplitter);
 
   nodes.stereoSplitter.connect(nodes.leftToMid, 0);
   nodes.stereoSplitter.connect(nodes.rightToMid, 1);
@@ -1333,8 +1361,10 @@ async function processAudioOffline(settings) {
 
   nodes.midGain.connect(nodes.midToLeft);
   nodes.midGain.connect(nodes.midToRight);
-  nodes.sideGain.connect(nodes.sideToLeft);
-  nodes.sideGain.connect(nodes.sideToRight);
+  // Side passes through the "Center Bass" high-pass before distribution
+  nodes.sideGain.connect(nodes.sideHighpass);
+  nodes.sideHighpass.connect(nodes.sideToLeft);
+  nodes.sideHighpass.connect(nodes.sideToRight);
 
   nodes.midToLeft.connect(nodes.stereoMerger, 0, 0);
   nodes.sideToLeft.connect(nodes.stereoMerger, 0, 0);
@@ -1349,7 +1379,8 @@ async function processAudioOffline(settings) {
 
   let renderedBuffer = await offlineCtx.startRendering();
 
-  // Loudness normalization (post-render, using same target as preview)
+  // Loudness normalization — measured on the fully processed (pre-limiter)
+  // signal and applied before the limiter runs.
   if (settings.normalizeLoudness) {
     const lufsResult = measureLUFS(renderedBuffer);
     const targetLufs = settings.targetLufs || AUDIO_CONSTANTS.TARGET_LUFS;
@@ -1365,7 +1396,138 @@ async function processAudioOffline(settings) {
     }
   }
 
+  // Final limiting stage — runs last so the ceiling holds after normalization:
+  //   1. musical peak limiting (compressor-based) to control dynamics
+  //   2. true-peak (4x oversampled) clip so inter-sample peaks stay under the
+  //      ceiling — genuine dBTP compliance, not just sample-peak.
+  if (settings.truePeakLimit) {
+    renderedBuffer = await applyLimiterPass(renderedBuffer, settings.truePeakCeiling);
+    renderedBuffer = await truePeakClip(renderedBuffer, settings.truePeakCeiling);
+  }
+
   return renderedBuffer;
+}
+
+/**
+ * Build a hard-clip transfer curve for a WaveShaper that clamps the signal to
+ * ±ceilingLinear. Used for the live preview so it matches the exported file.
+ */
+function makeClipCurve(ceilingLinear) {
+  const n = 2048;
+  const curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1; // map index to input range [-1, 1]
+    curve[i] = Math.max(-ceilingLinear, Math.min(ceilingLinear, x));
+  }
+  return curve;
+}
+
+/**
+ * Hard-clamp every sample in a buffer to ±ceiling (dBFS). This is the final
+ * brickwall guarantee: after musical limiting, nothing can exceed the ceiling.
+ */
+function applyCeilingClip(buffer, ceilingDb) {
+  const ceilingLin = Math.pow(10, ceilingDb / 20);
+  for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+    const data = buffer.getChannelData(ch);
+    for (let i = 0; i < data.length; i++) {
+      if (data[i] > ceilingLin) data[i] = ceilingLin;
+      else if (data[i] < -ceilingLin) data[i] = -ceilingLin;
+    }
+  }
+}
+
+/**
+ * Resample an AudioBuffer to a target sample rate using an OfflineAudioContext
+ * (high-quality resampling). Returns the original buffer if rates already match.
+ */
+async function resampleBuffer(buffer, targetRate) {
+  if (buffer.sampleRate === targetRate) return buffer;
+  const frames = Math.max(1, Math.round(buffer.length * targetRate / buffer.sampleRate));
+  const ctx = new OfflineAudioContext(buffer.numberOfChannels, frames, targetRate);
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  src.connect(ctx.destination);
+  src.start(0);
+  return ctx.startRendering();
+}
+
+/**
+ * Find the maximum absolute sample value across all channels of a buffer.
+ */
+function peakOf(buffer) {
+  let peak = 0;
+  for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+    const d = buffer.getChannelData(ch);
+    for (let i = 0; i < d.length; i++) {
+      const a = Math.abs(d[i]);
+      if (a > peak) peak = a;
+    }
+  }
+  return peak;
+}
+
+/**
+ * Measure the true peak (inter-sample peak) of a buffer in dBTP using 4x
+ * oversampling per ITU-R BS.1770. Returns -Infinity for silence.
+ */
+async function measureTruePeakDb(buffer) {
+  const up = await resampleBuffer(buffer, buffer.sampleRate * 4);
+  const peak = peakOf(up);
+  return peak > 0 ? 20 * Math.log10(peak) : -Infinity;
+}
+
+/**
+ * True-peak (inter-sample) safe clipping, per ITU-R BS.1770 4x oversampling.
+ *
+ * Inter-sample peaks are overshoots that only appear after the DAC
+ * reconstructs the analog waveform between samples — they can exceed the
+ * sample-peak ceiling and cause clipping in downstream encoders/players.
+ *
+ * We upsample 4x, measure the true peak there, and only if it exceeds the
+ * ceiling do we clip in the oversampled domain and resample back. When the
+ * signal is already true-peak safe the original buffer is returned untouched,
+ * so we never colour audio that doesn't need it.
+ */
+async function truePeakClip(buffer, ceilingDb) {
+  const OS = 4;
+  const baseRate = buffer.sampleRate;
+  const ceilingLin = Math.pow(10, ceilingDb / 20);
+
+  const up = await resampleBuffer(buffer, baseRate * OS);
+
+  if (peakOf(up) <= ceilingLin) {
+    return buffer; // already true-peak compliant — leave the audio alone
+  }
+
+  // Clip inter-sample overshoots in the oversampled domain, then come back.
+  applyCeilingClip(up, ceilingDb);
+  const out = await resampleBuffer(up, baseRate);
+
+  // Guard against any tiny ripple introduced by the downsampling filter.
+  applyCeilingClip(out, ceilingDb);
+  return out;
+}
+
+/**
+ * Run a signal through the true-peak limiter as an isolated final pass.
+ * Kept separate so normalization/make-up gain is applied before limiting.
+ */
+async function applyLimiterPass(buffer, ceiling) {
+  const ctx = new OfflineAudioContext(buffer.numberOfChannels, buffer.length, buffer.sampleRate);
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+
+  const limiter = ctx.createDynamicsCompressor();
+  limiter.threshold.value = ceiling;
+  limiter.knee.value = 0;
+  limiter.ratio.value = AUDIO_CONSTANTS.LIMITER_RATIO;
+  limiter.attack.value = AUDIO_CONSTANTS.LIMITER_ATTACK;
+  limiter.release.value = AUDIO_CONSTANTS.LIMITER_RELEASE;
+
+  src.connect(limiter).connect(ctx.destination);
+  src.start(0);
+  return ctx.startRendering();
 }
 
 // ─── Export ─────────────────────────────────────────────────────────────────
@@ -1882,11 +2044,45 @@ function updateBatchButtons() {
 }
 
 function ensureFileInQueue(filePath) {
-  const alreadyQueued = batchState.queue.some(q => q.path === filePath);
-  if (!alreadyQueued) {
+  const existing = batchState.queue.find(q => q.path === filePath);
+  if (!existing) {
     const name = filePath.split(/[\\/]/).pop();
-    batchState.queue.push({ path: filePath, name, status: 'pending' });
+    const item = { path: filePath, name, status: 'pending' };
+    // Pre-populate metadata from tags parsed during loadAudioFile
+    applyParsedMetadata(item, state.file.parsedMetadata);
+    batchState.queue.push(item);
     updateBatchButtons();
+  } else if (!hasAnyMeta(existing)) {
+    applyParsedMetadata(existing, state.file.parsedMetadata);
+    if (metaSelectedIndex === batchState.queue.indexOf(existing)) {
+      selectMetaFile(metaSelectedIndex);
+    }
+  }
+}
+
+// Merge parsed tags into a queue item without clobbering fields the user
+// has already typed. Only fills empty fields.
+function applyParsedMetadata(item, parsed) {
+  if (!parsed) return;
+  const meta = getItemMeta(item);
+  for (const key of ['title', 'artist', 'album', 'genre', 'year', 'track', 'comment']) {
+    const val = parsed[key];
+    if (val && !(meta[key] && meta[key].trim())) {
+      meta[key] = val;
+    }
+  }
+}
+
+// Read tags directly from a file path (used for batch-added files that
+// aren't loaded into the player).
+async function loadMetadataForItem(item) {
+  if (!item || hasAnyMeta(item)) return;
+  try {
+    const arrayData = await window.electronAPI.readAudioFile(item.path);
+    const parsed = readAudioMetadata(new Uint8Array(arrayData));
+    applyParsedMetadata(item, parsed);
+  } catch (err) {
+    console.warn('Could not read metadata for', item.path, err);
   }
 }
 
@@ -1943,15 +2139,27 @@ function renderBatchList() {
   });
 }
 
-function addFilesToBatch(filePaths) {
+async function addFilesToBatch(filePaths) {
   const existing = new Set(batchState.queue.map(q => q.path));
+  const added = [];
   for (const fp of filePaths) {
     if (existing.has(fp)) continue;
     const name = fp.split(/[\\/]/).pop();
-    batchState.queue.push({ path: fp, name, status: 'pending' });
+    const item = { path: fp, name, status: 'pending' };
+    batchState.queue.push(item);
+    added.push(item);
   }
   renderBatchList();
   updateBatchButtons();
+
+  // Read embedded tags in the background, then refresh the lists
+  for (const item of added) {
+    await loadMetadataForItem(item);
+  }
+  if (added.length) {
+    renderMetaFileList();
+    if (metaSelectedIndex >= 0) selectMetaFile(metaSelectedIndex);
+  }
 }
 
 batchDom.addBtn.addEventListener('click', async () => {
