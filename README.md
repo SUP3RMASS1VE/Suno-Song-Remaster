@@ -27,6 +27,28 @@ Get the latest release for your platform:
 - **macOS** - `.dmg` disk image  
 - **Linux** - `.AppImage`
 
+### ⚠️ Important Note for macOS Users
+
+The macOS build is **not signed with an Apple Developer certificate**, so Gatekeeper will block it on first launch with a message like *"AI Music Remastering is damaged and can't be opened"* or *"cannot be opened because the developer cannot be verified"* (with a "Move to Bin" option).
+
+This is expected for unsigned apps — the app is safe to run. To open it:
+
+**Option 1 — Open Anyway (recommended)**
+1. Try to open the app once (you'll see the warning), then click **Cancel**.
+2. Go to **System Settings → Privacy & Security**.
+3. Scroll to the **Security** section — you'll see a message about the app being blocked.
+4. Click **Open Anyway**, then confirm.
+
+**Option 2 — Remove the quarantine flag via Terminal**
+
+If the app still won't open (common on Apple Silicon), run this once after moving the app to `/Applications`:
+
+```bash
+xattr -cr "/Applications/AI Music Remastering.app"
+```
+
+Then open the app normally. You only need to do this once.
+
 ## Usage
 
 1. Drag & drop an audio file (MP3, WAV, FLAC, AAC, M4A)
