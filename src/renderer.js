@@ -714,6 +714,8 @@ async function loadAudioFile(filePath) {
     dom.stopBtn.disabled = false;
     dom.processBtn.disabled = false;
 
+    onFileLoadedForEditor();
+
     return true;
   } catch (error) {
     console.error('Error loading audio:', error);
@@ -797,6 +799,7 @@ function playAudio() {
   startLevelMeters();
   startSeekUpdate();
   startSpectrogram();
+  updateEditorTransportUI();
 }
 
 function pauseAudio() {
@@ -818,6 +821,7 @@ function stopAudio() {
   dom.playIcon.textContent = '▶';
   clearInterval(state.playback.seekInterval);
   stopLevelMeters();
+  updateEditorTransportUI();
 }
 
 function startSeekUpdate() {
@@ -826,6 +830,14 @@ function startSeekUpdate() {
   state.playback.seekInterval = setInterval(() => {
     if (state.playback.isPlaying && state.file.buffer && !state.playback.isSeeking) {
       const currentTime = state.audio.context.currentTime - state.playback.startTime;
+
+      // Loop selection in the editor
+      if (editorState.loop && editorState.selStart !== null && editorState.selEnd !== null
+          && currentTime >= editorState.selEnd) {
+        seekTo(editorState.selStart);
+        return;
+      }
+
       if (currentTime >= state.file.duration) {
         stopAudio();
         state.playback.pauseTime = 0;
@@ -835,6 +847,7 @@ function startSeekUpdate() {
         const progress = (currentTime / state.file.duration) * 100;
         dom.waveformProgress.style.width = `${progress}%`;
         dom.currentTimeEl.textContent = formatTime(currentTime);
+        updateEditorPlayhead(currentTime);
       }
     }
   }, 100);
@@ -1738,22 +1751,25 @@ const batchDom = {
 };
 
 // ─── Batch Tabs ─────────────────────────────────────────────────────────────
-batchDom.tabQueue.addEventListener('click', () => {
-  batchDom.tabQueue.classList.add('active');
-  batchDom.tabMeta.classList.remove('active');
-  batchDom.tabQueue.setAttribute('aria-selected', 'true');
-  batchDom.tabMeta.setAttribute('aria-selected', 'false');
-  batchDom.tabContentQueue.classList.remove('hidden');
-  batchDom.tabContentMeta.classList.add('hidden');
-});
+function setActiveBatchTab(which) {
+  const tabs = {
+    queue: { tab: batchDom.tabQueue, content: batchDom.tabContentQueue },
+    meta: { tab: batchDom.tabMeta, content: batchDom.tabContentMeta },
+    edit: { tab: document.getElementById('tabEdit'), content: document.getElementById('batchTabEdit') }
+  };
+  Object.entries(tabs).forEach(([key, { tab, content }]) => {
+    if (!tab || !content) return;
+    const active = key === which;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', active ? 'true' : 'false');
+    content.classList.toggle('hidden', !active);
+  });
+}
+
+batchDom.tabQueue.addEventListener('click', () => setActiveBatchTab('queue'));
 
 batchDom.tabMeta.addEventListener('click', () => {
-  batchDom.tabMeta.classList.add('active');
-  batchDom.tabQueue.classList.remove('active');
-  batchDom.tabMeta.setAttribute('aria-selected', 'true');
-  batchDom.tabQueue.setAttribute('aria-selected', 'false');
-  batchDom.tabContentMeta.classList.remove('hidden');
-  batchDom.tabContentQueue.classList.add('hidden');
+  setActiveBatchTab('meta');
   renderMetaFileList();
 });
 
@@ -2072,9 +2088,10 @@ batchDom.exportBtn.addEventListener('click', async () => {
         metadata: item.metadata || null
       });
 
-      // Build output path
+      // Build output path (use the separator that matches the OS/path style)
       const baseName = item.name.replace(/\.[^.]+$/, '');
-      const sep = (outputDir.endsWith('/') || outputDir.endsWith('\\')) ? '' : '\\';
+      const alreadyHasSep = outputDir.endsWith('/') || outputDir.endsWith('\\');
+      const sep = alreadyHasSep ? '' : (outputDir.includes('\\') ? '\\' : '/');
       const outputPath = outputDir + sep + baseName + '_mastered.wav';
 
       await writeFileChunked(outputPath, wavBuffer);
@@ -2122,3 +2139,443 @@ loadSettingsFromStorage();
 updateChecklist();
 updateEQ();
 refreshFaderFills();
+
+// ─── Editor (mini DAW) ──────────────────────────────────────────────────────
+const editorState = {
+  selStart: null,   // seconds
+  selEnd: null,     // seconds
+  loop: false,
+  original: null,   // buffer as first loaded (for Reset)
+  history: [],      // stack of previous buffers (Undo Edit)
+  drag: null        // { startX, moved } during selection drag
+};
+
+const editorDom = {
+  empty: document.getElementById('editorEmpty'),
+  workspace: document.getElementById('editorWorkspace'),
+  canvas: document.getElementById('editorCanvas'),
+  container: document.getElementById('editorWaveContainer'),
+  selection: document.getElementById('editorSelection'),
+  playhead: document.getElementById('editorPlayhead'),
+  selInfo: document.getElementById('editorSelInfo'),
+  playBtn: document.getElementById('edPlayBtn'),
+  stopBtn: document.getElementById('edStopBtn'),
+  loopBtn: document.getElementById('edLoopBtn'),
+  fadeDuration: document.getElementById('fadeInDuration'),
+  fadeDurationVal: document.getElementById('fadeInDurationVal'),
+  fadeIn: document.getElementById('edFadeIn'),
+  fadeOut: document.getElementById('edFadeOut'),
+  trim: document.getElementById('edTrim'),
+  cut: document.getElementById('edCut'),
+  silence: document.getElementById('edSilence'),
+  normalize: document.getElementById('edNormalize'),
+  reverse: document.getElementById('edReverse'),
+  undo: document.getElementById('edUndo'),
+  reset: document.getElementById('edReset')
+};
+
+function editorStatus(msg, type = 'success') {
+  dom.statusMessage.textContent = (type === 'error' ? '✗ ' : '✓ ') + msg;
+  dom.statusMessage.className = `status-message ${type} visible`;
+  setTimeout(() => dom.statusMessage.classList.remove('visible'), 3500);
+}
+
+// Deep-copy an AudioBuffer so edits don't mutate the undo history
+function copyBuffer(buf) {
+  const ctx = initAudioContext();
+  const out = ctx.createBuffer(buf.numberOfChannels, buf.length, buf.sampleRate);
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+    out.getChannelData(ch).set(buf.getChannelData(ch));
+  }
+  return out;
+}
+
+function onFileLoadedForEditor() {
+  editorState.original = copyBuffer(state.file.buffer);
+  editorState.history = [];
+  editorState.selStart = editorState.selEnd = null;
+  editorState.loop = false;
+  if (editorDom.loopBtn) editorDom.loopBtn.classList.remove('active');
+  updateEditorAvailability();
+  renderSelection();
+  drawEditorWaveform();
+}
+
+function updateEditorAvailability() {
+  const hasFile = !!state.file.buffer;
+  if (editorDom.empty) editorDom.empty.classList.toggle('hidden', hasFile);
+  if (editorDom.workspace) editorDom.workspace.classList.toggle('hidden', !hasFile);
+}
+
+// Apply an edited buffer as the new working audio and refresh everything downstream
+function applyEditedBuffer(newBuffer) {
+  stopAudio();
+  state.playback.pauseTime = 0;
+
+  state.file.buffer = newBuffer;
+  state.file.duration = newBuffer.duration;
+  dom.durationEl.textContent = formatTime(newBuffer.duration);
+  dom.currentTimeEl.textContent = '0:00';
+  dom.waveformProgress.style.width = '0%';
+
+  const lufsResult = measureLUFS(newBuffer);
+  state.file.lufs = lufsResult.integratedLUFS;
+  const targetLufs = dom.targetLufs ? parseInt(dom.targetLufs.value) : AUDIO_CONSTANTS.TARGET_LUFS;
+  state.file.normGain = calculateNormalizationGain(state.file.lufs, targetLufs);
+
+  createAudioChain();
+
+  const sr = newBuffer.sampleRate;
+  const ch = newBuffer.numberOfChannels;
+  const lufsDisplay = isFinite(state.file.lufs) ? `${state.file.lufs.toFixed(1)} LUFS` : 'N/A';
+  dom.fileMeta.textContent = `${Math.round(sr / 1000)}kHz • ${ch}ch • ${formatTime(newBuffer.duration)} • ${lufsDisplay}`;
+
+  drawWaveform();
+  drawEditorWaveform();
+  renderSelection();
+}
+
+// Push current buffer to history before a destructive edit
+function pushEditHistory() {
+  editorState.history.push(copyBuffer(state.file.buffer));
+  if (editorState.history.length > 30) editorState.history.shift();
+  editorDom.undo.disabled = false;
+}
+
+// ─── Editor waveform rendering ──────────────────────────────────────────────
+function drawEditorWaveform() {
+  const canvas = editorDom.canvas;
+  if (!canvas || !state.file.buffer) return;
+
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width === 0) return; // tab not visible yet
+
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const width = rect.width;
+  const height = rect.height;
+  const mid = height / 2;
+
+  ctx.clearRect(0, 0, width, height);
+
+  // center line
+  ctx.strokeStyle = 'rgba(168, 85, 247, 0.25)';
+  ctx.beginPath();
+  ctx.moveTo(0, mid);
+  ctx.lineTo(width, mid);
+  ctx.stroke();
+
+  const data = state.file.buffer.getChannelData(0);
+  const step = Math.max(1, Math.ceil(data.length / width));
+  const amp = mid * 0.95;
+
+  ctx.fillStyle = '#a855f7';
+  for (let i = 0; i < width; i++) {
+    let min = 1.0;
+    let max = -1.0;
+    for (let j = 0; j < step; j++) {
+      const datum = data[(i * step) + j];
+      if (datum === undefined) break;
+      if (datum < min) min = datum;
+      if (datum > max) max = datum;
+    }
+    const y1 = mid - max * amp;
+    const y2 = mid - min * amp;
+    ctx.fillRect(i, y1, 1, Math.max(1, y2 - y1));
+  }
+}
+
+function renderSelection() {
+  const { selStart, selEnd } = editorState;
+  if (!state.file.buffer || selStart === null || selEnd === null || selEnd <= selStart) {
+    editorDom.selection.style.display = 'none';
+    if (editorDom.selInfo) editorDom.selInfo.textContent = 'No selection — click and drag on the waveform';
+    return;
+  }
+  const dur = state.file.duration;
+  const leftPct = (selStart / dur) * 100;
+  const widthPct = ((selEnd - selStart) / dur) * 100;
+  editorDom.selection.style.display = 'block';
+  editorDom.selection.style.left = `${leftPct}%`;
+  editorDom.selection.style.width = `${widthPct}%`;
+  if (editorDom.selInfo) {
+    editorDom.selInfo.textContent =
+      `Selection: ${formatTime(selStart)} → ${formatTime(selEnd)} (${(selEnd - selStart).toFixed(2)}s)`;
+  }
+}
+
+function updateEditorPlayhead(time) {
+  if (!editorDom.playhead || !state.file.buffer) return;
+  if (editorDom.workspace && editorDom.workspace.classList.contains('hidden')) return;
+  const pct = Math.max(0, Math.min(1, time / state.file.duration));
+  editorDom.playhead.style.left = `${pct * 100}%`;
+  editorDom.playhead.style.opacity = state.playback.isPlaying ? '1' : '0';
+}
+
+function updateEditorTransportUI() {
+  if (editorDom.playBtn) {
+    editorDom.playBtn.textContent = state.playback.isPlaying ? '⏸ Pause' : '▶ Play';
+  }
+  if (editorDom.playhead && !state.playback.isPlaying) {
+    editorDom.playhead.style.opacity = '0';
+  }
+}
+
+// ─── Selection interaction ──────────────────────────────────────────────────
+function xToTime(clientX) {
+  const rect = editorDom.container.getBoundingClientRect();
+  const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  return pct * state.file.duration;
+}
+
+if (editorDom.container) {
+  editorDom.container.addEventListener('mousedown', (e) => {
+    if (!state.file.buffer) return;
+    editorState.drag = { startTime: xToTime(e.clientX), startX: e.clientX, moved: false };
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!editorState.drag) return;
+    if (Math.abs(e.clientX - editorState.drag.startX) > 3) editorState.drag.moved = true;
+    const t = xToTime(e.clientX);
+    editorState.selStart = Math.min(editorState.drag.startTime, t);
+    editorState.selEnd = Math.max(editorState.drag.startTime, t);
+    renderSelection();
+  });
+
+  window.addEventListener('mouseup', (e) => {
+    if (!editorState.drag) return;
+    const drag = editorState.drag;
+    editorState.drag = null;
+    if (!drag.moved) {
+      // treat as a click: clear selection and seek
+      editorState.selStart = editorState.selEnd = null;
+      renderSelection();
+      seekTo(drag.startTime);
+    }
+  });
+}
+
+// ─── Selection helpers ──────────────────────────────────────────────────────
+function selectionSamples() {
+  if (editorState.selStart === null || editorState.selEnd === null) return null;
+  const sr = state.file.buffer.sampleRate;
+  const start = Math.max(0, Math.floor(editorState.selStart * sr));
+  const end = Math.min(state.file.buffer.length, Math.ceil(editorState.selEnd * sr));
+  if (end <= start) return null;
+  return { start, end };
+}
+
+function requireSelection() {
+  const sel = selectionSamples();
+  if (!sel) editorStatus('Select a region on the waveform first.', 'error');
+  return sel;
+}
+
+// ─── Edit operations ────────────────────────────────────────────────────────
+function applyFade(isFadeIn) {
+  if (!state.file.buffer) return;
+  const buf = state.file.buffer;
+  const sr = buf.sampleRate;
+  const fadeSecs = parseFloat(editorDom.fadeDuration.value);
+
+  let start, end;
+  const sel = selectionSamples();
+  if (sel) {
+    start = sel.start;
+    end = sel.end;
+  } else if (isFadeIn) {
+    start = 0;
+    end = Math.min(buf.length, Math.floor(fadeSecs * sr));
+  } else {
+    end = buf.length;
+    start = Math.max(0, buf.length - Math.floor(fadeSecs * sr));
+  }
+  if (end <= start) return;
+
+  pushEditHistory();
+  const out = copyBuffer(buf);
+  const range = end - start;
+  for (let ch = 0; ch < out.numberOfChannels; ch++) {
+    const d = out.getChannelData(ch);
+    for (let i = start; i < end; i++) {
+      const p = (i - start) / range;               // 0..1 across the region
+      const g = isFadeIn ? Math.sin(p * Math.PI / 2) : Math.cos(p * Math.PI / 2); // equal-power
+      d[i] *= g;
+    }
+  }
+  applyEditedBuffer(out);
+  editorStatus(`${isFadeIn ? 'Fade in' : 'Fade out'} applied.`);
+}
+
+function trimToSelection() {
+  const sel = requireSelection();
+  if (!sel) return;
+  const buf = state.file.buffer;
+  pushEditHistory();
+  const ctx = initAudioContext();
+  const len = sel.end - sel.start;
+  const out = ctx.createBuffer(buf.numberOfChannels, len, buf.sampleRate);
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+    out.getChannelData(ch).set(buf.getChannelData(ch).subarray(sel.start, sel.end));
+  }
+  editorState.selStart = editorState.selEnd = null;
+  applyEditedBuffer(out);
+  editorStatus('Trimmed to selection.');
+}
+
+function deleteSelection() {
+  const sel = requireSelection();
+  if (!sel) return;
+  const buf = state.file.buffer;
+  const len = buf.length - (sel.end - sel.start);
+  if (len <= 0) { editorStatus('Cannot delete the entire track.', 'error'); return; }
+  pushEditHistory();
+  const ctx = initAudioContext();
+  const out = ctx.createBuffer(buf.numberOfChannels, len, buf.sampleRate);
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+    const src = buf.getChannelData(ch);
+    const dst = out.getChannelData(ch);
+    dst.set(src.subarray(0, sel.start), 0);
+    dst.set(src.subarray(sel.end), sel.start);
+  }
+  editorState.selStart = editorState.selEnd = null;
+  applyEditedBuffer(out);
+  editorStatus('Selection deleted.');
+}
+
+function silenceSelection() {
+  const sel = requireSelection();
+  if (!sel) return;
+  pushEditHistory();
+  const out = copyBuffer(state.file.buffer);
+  for (let ch = 0; ch < out.numberOfChannels; ch++) {
+    out.getChannelData(ch).fill(0, sel.start, sel.end);
+  }
+  applyEditedBuffer(out);
+  editorStatus('Selection silenced.');
+}
+
+function normalizeBuffer() {
+  if (!state.file.buffer) return;
+  const buf = state.file.buffer;
+  let peak = 0;
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+    const d = buf.getChannelData(ch);
+    for (let i = 0; i < d.length; i++) {
+      const a = Math.abs(d[i]);
+      if (a > peak) peak = a;
+    }
+  }
+  if (peak === 0) { editorStatus('Track is silent — nothing to normalize.', 'error'); return; }
+  const target = Math.pow(10, -0.3 / 20); // -0.3 dBFS
+  const gain = target / peak;
+  pushEditHistory();
+  const out = copyBuffer(buf);
+  for (let ch = 0; ch < out.numberOfChannels; ch++) {
+    const d = out.getChannelData(ch);
+    for (let i = 0; i < d.length; i++) d[i] *= gain;
+  }
+  applyEditedBuffer(out);
+  editorStatus(`Normalized (+${(20 * Math.log10(gain)).toFixed(1)} dB).`);
+}
+
+function reverseBuffer() {
+  if (!state.file.buffer) return;
+  const buf = state.file.buffer;
+  const sel = selectionSamples();
+  const start = sel ? sel.start : 0;
+  const end = sel ? sel.end : buf.length;
+  pushEditHistory();
+  const out = copyBuffer(buf);
+  for (let ch = 0; ch < out.numberOfChannels; ch++) {
+    const d = out.getChannelData(ch);
+    let lo = start, hi = end - 1;
+    while (lo < hi) { const tmp = d[lo]; d[lo] = d[hi]; d[hi] = tmp; lo++; hi--; }
+  }
+  applyEditedBuffer(out);
+  editorStatus(sel ? 'Selection reversed.' : 'Track reversed.');
+}
+
+function undoEdit() {
+  if (editorState.history.length === 0) return;
+  const prev = editorState.history.pop();
+  editorState.selStart = editorState.selEnd = null;
+  applyEditedBuffer(prev);
+  editorDom.undo.disabled = editorState.history.length === 0;
+  editorStatus('Edit undone.');
+}
+
+function resetEdits() {
+  if (!editorState.original) return;
+  editorState.history = [];
+  editorState.selStart = editorState.selEnd = null;
+  editorDom.undo.disabled = true;
+  applyEditedBuffer(copyBuffer(editorState.original));
+  editorStatus('Reverted to original audio.');
+}
+
+// ─── Editor wiring ──────────────────────────────────────────────────────────
+if (editorDom.canvas) {
+  const tabEditBtn = document.getElementById('tabEdit');
+  tabEditBtn.addEventListener('click', () => {
+    setActiveBatchTab('edit');
+    updateEditorAvailability();
+    // canvas has real dimensions now that the tab is visible
+    requestAnimationFrame(() => { drawEditorWaveform(); renderSelection(); });
+  });
+
+  editorDom.fadeDuration.addEventListener('input', () => {
+    editorDom.fadeDurationVal.textContent = `${parseFloat(editorDom.fadeDuration.value).toFixed(1)}s`;
+  });
+
+  editorDom.playBtn.addEventListener('click', () => {
+    if (!state.file.buffer) return;
+    if (state.playback.isPlaying) {
+      pauseAudio();
+    } else {
+      if (editorState.selStart !== null) seekTo(editorState.selStart);
+      playAudio();
+    }
+    updateEditorTransportUI();
+  });
+
+  editorDom.stopBtn.addEventListener('click', () => {
+    stopAudio();
+    state.playback.pauseTime = 0;
+    dom.waveformProgress.style.width = '0%';
+    dom.currentTimeEl.textContent = '0:00';
+    updateEditorPlayhead(0);
+  });
+
+  editorDom.loopBtn.addEventListener('click', () => {
+    editorState.loop = !editorState.loop;
+    editorDom.loopBtn.classList.toggle('active', editorState.loop);
+  });
+
+  editorDom.fadeIn.addEventListener('click', () => applyFade(true));
+  editorDom.fadeOut.addEventListener('click', () => applyFade(false));
+  editorDom.trim.addEventListener('click', trimToSelection);
+  editorDom.cut.addEventListener('click', deleteSelection);
+  editorDom.silence.addEventListener('click', silenceSelection);
+  editorDom.normalize.addEventListener('click', normalizeBuffer);
+  editorDom.reverse.addEventListener('click', reverseBuffer);
+  editorDom.undo.addEventListener('click', undoEdit);
+  editorDom.reset.addEventListener('click', resetEdits);
+
+  editorDom.undo.disabled = true;
+
+  // Redraw when the window resizes while the editor tab is open
+  window.addEventListener('resize', () => {
+    if (editorDom.workspace && !editorDom.workspace.classList.contains('hidden')) {
+      drawEditorWaveform();
+      renderSelection();
+    }
+  });
+}
+
+updateEditorAvailability();

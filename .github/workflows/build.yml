@@ -111,11 +111,17 @@ jobs:
             ## What's New in ${{ github.ref_name != '' && startsWith(github.ref, 'refs/tags/') && github.ref_name || steps.pkg.outputs.version }}
 
             ### New Features
-            - **Light/Dark Mode** — Toggle between light and dark themes via the sun/moon button in the top bar
-            - Theme preference persists across restarts via localStorage
+            - **Audio Editor (mini DAW)** — New "✂️ Editor" tab with an interactive waveform
+            - Click-drag to select a region, single-click to move the playhead
+            - Fade In / Fade Out with adjustable duration (equal-power curve)
+            - Trim to Selection, Delete Selection, and Silence
+            - Normalize (peak to -0.3 dBFS) and Reverse (selection or whole track)
+            - Play / Pause / Stop transport with selection looping
+            - Per-session Undo Edit (up to 30 steps) and Reset to Original
+            - Edits flow straight into the mastering chain and export
 
             ### Bug Fixes
-            - Fixed spectrogram rendering issue caused by devicePixelRatio canvas scaling mismatch
+            - Fixed batch "Export All" using a hardcoded Windows path separator, which produced mangled output paths on macOS and Linux
 
             See the full [changelog](https://github.com/${{ github.repository }}/blob/main/README.md#changelog) for details.
         env:

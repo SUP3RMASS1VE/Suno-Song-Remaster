@@ -14,6 +14,7 @@ A professional desktop app for mastering AI-generated music to streaming-ready q
 - **5-Band EQ** - Fine-tune with visual faders and presets (Flat, Vocal Boost, Bass Boost, Bright, Warm, AI Fix)
 - **Quick Fix Tools** - Glue compression, clean low end
 - **Polish Effects** - Cut mud, add air, tame harshness
+- **Audio Editor** - Mini DAW tab with waveform selection, fade in/out, trim, cut, silence, normalize, and reverse
 - **Real-time Preview** - Hear all changes live before exporting, preview any queued file
 - **Clipping Detection** - Visual CLIP indicators on meters
 - **High-Quality Export** - WAV output at 44.1/48kHz, 16/24-bit with embedded metadata
@@ -69,6 +70,21 @@ npm run electron:build:mac    # macOSnpm run electron:build:linux  # Linux
 
 
 ## Changelog
+
+### v2.1.0
+
+**New Features**
+- Audio Editor (mini DAW) — a new "✂️ Editor" tab with an interactive waveform
+- Click-drag on the waveform to select a region, single-click to move the playhead
+- Fade In / Fade Out with an adjustable duration slider (equal-power curve)
+- Trim to Selection, Delete Selection, and Silence
+- Normalize (peak to -0.3 dBFS) and Reverse (selection or whole track)
+- Editor transport: Play / Pause / Stop with selection looping
+- Per-session Undo Edit (up to 30 steps) and Reset to Original
+- Edits update the loaded buffer, re-measure LUFS, and flow directly into the mastering chain and export
+
+**Bug Fixes**
+- Fixed batch "Export All" using a hardcoded Windows path separator (`\`), which produced mangled output paths on macOS and Linux
 
 ### v2.0.2
 

@@ -126,6 +126,7 @@
         <div class="batch-tabs" role="tablist" aria-label="Batch panel tabs">
           <button class="batch-tab active" id="tabQueue" role="tab" aria-selected="true" aria-controls="batchTabQueue">📦 Queue</button>
           <button class="batch-tab" id="tabMeta" role="tab" aria-selected="false" aria-controls="batchTabMeta">🏷️ Metadata</button>
+          <button class="batch-tab" id="tabEdit" role="tab" aria-selected="false" aria-controls="batchTabEdit">✂️ Editor</button>
         </div>
         <div class="batch-actions">
           <button id="batchAddFiles" class="btn-batch" aria-label="Add files to batch queue">+ Add Files</button>
@@ -193,6 +194,67 @@
               </div>
               <div class="meta-apply-row">
                 <button id="metaApplyAll" class="btn-batch" aria-label="Copy this metadata to all files in queue">Apply to All</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Editor Tab (mini DAW) -->
+      <div class="batch-tab-content hidden" id="batchTabEdit" role="tabpanel" aria-labelledby="tabEdit">
+        <div class="editor-empty" id="editorEmpty">
+          <span>Load an audio file to start editing. Drag on the waveform to select a region, then apply fades, trim, or cut.</span>
+        </div>
+        <div class="editor-workspace hidden" id="editorWorkspace">
+          <div class="editor-transport" role="group" aria-label="Editor playback controls">
+            <button id="edPlayBtn" class="ed-btn" aria-label="Play or pause">▶ Play</button>
+            <button id="edStopBtn" class="ed-btn" aria-label="Stop playback">■ Stop</button>
+            <button id="edLoopBtn" class="ed-btn" aria-label="Loop selection">🔁 Loop</button>
+            <span class="editor-sel-info" id="editorSelInfo">No selection — click and drag on the waveform</span>
+          </div>
+
+          <div class="editor-waveform-container" id="editorWaveContainer" role="group" aria-label="Editable waveform">
+            <canvas id="editorCanvas"></canvas>
+            <div class="editor-selection" id="editorSelection"></div>
+            <div class="editor-playhead" id="editorPlayhead"></div>
+          </div>
+
+          <div class="editor-tools">
+            <div class="editor-tool-group">
+              <h4>Fades</h4>
+              <div class="editor-fade-row">
+                <label for="fadeInDuration">Fade time</label>
+                <input type="range" id="fadeInDuration" min="0.1" max="10" step="0.1" value="2" aria-label="Fade duration in seconds">
+                <span id="fadeInDurationVal">2.0s</span>
+              </div>
+              <div class="editor-btn-row">
+                <button id="edFadeIn" class="ed-btn" data-tip="Fade in over the selection, or the start of the track if nothing is selected.">Fade In</button>
+                <button id="edFadeOut" class="ed-btn" data-tip="Fade out over the selection, or the end of the track if nothing is selected.">Fade Out</button>
+              </div>
+            </div>
+
+            <div class="editor-tool-group">
+              <h4>Edit</h4>
+              <div class="editor-btn-row">
+                <button id="edTrim" class="ed-btn" data-tip="Keep only the selected region, discard the rest.">Trim to Selection</button>
+                <button id="edCut" class="ed-btn" data-tip="Delete the selected region and join the remaining audio.">Delete Selection</button>
+                <button id="edSilence" class="ed-btn" data-tip="Silence the selected region.">Silence</button>
+              </div>
+            </div>
+
+            <div class="editor-tool-group">
+              <h4>Process</h4>
+              <div class="editor-btn-row">
+                <button id="edNormalize" class="ed-btn" data-tip="Peak-normalize the whole track to -0.3 dB.">Normalize</button>
+                <button id="edReverse" class="ed-btn" data-tip="Reverse the selection, or the whole track.">Reverse</button>
+              </div>
+            </div>
+
+            <div class="editor-tool-group">
+              <h4>History</h4>
+              <div class="editor-btn-row">
+                <button id="edUndo" class="ed-btn" data-tip="Undo the last edit.">↶ Undo Edit</button>
+                <button id="edReset" class="ed-btn ed-btn-danger" data-tip="Revert all edits back to the originally loaded audio.">Reset to Original</button>
               </div>
             </div>
           </div>

@@ -4,3 +4,4 @@ release/
 *.log
 .DS_Store
 Thumbs.db
+.vscode/
