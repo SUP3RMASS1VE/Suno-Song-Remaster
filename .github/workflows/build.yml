@@ -35,21 +35,15 @@ jobs:
 
       - name: Build for Windows
         if: matrix.platform == 'win'
-        run: npm run electron:build:win
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run electron:build:win -- --publish never
 
       - name: Build for macOS
         if: matrix.platform == 'mac'
-        run: npm run electron:build:mac
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run electron:build:mac -- --publish never
 
       - name: Build for Linux
         if: matrix.platform == 'linux'
-        run: npm run electron:build:linux
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run electron:build:linux -- --publish never
 
       - name: Upload Windows artifacts
         if: matrix.platform == 'win'
